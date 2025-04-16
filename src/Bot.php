@@ -786,7 +786,7 @@ use only this list of tags, dont use any other html tags
 
             // First, check if we should respond at all
             $shouldRespondPrompt = "You are an assistant that determines if a message mentioning a bot requires a response." .
-                "Analyze this message and determine if it's asking the bot to do something, talking about the bot, or just mentioning it in passing. Respond only if bot mentioned in the message. Example mentions: bot, железяка, бот, ботик, Аполон" .
+                "Analyze this message and determine if it's asking the bot to do something, talking about the bot, or just mentioning it in passing. Respond only if bot mentioned in the message. Example mentions: bot, железяка, бот, ботик, Аполон, Аполлон" .
                 "Only respond with number from 0 to 100. Higher number means need more likely to respond it chance that the message needs a response." .
                 "Otherwise respond with 0.\n\nMessage: \"" . $messageText . "\"";
 

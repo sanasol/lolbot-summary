@@ -9,6 +9,37 @@ require_once __DIR__ . '/../vendor/autoload.php';
 use App\Bot;
 use Dotenv\Dotenv;
 
+// Define lock file path
+$lockFile = __DIR__ . '/../data/cron_job.lock';
+$lockTimeout = 3600; // 1 hour timeout for lock file (in seconds)
+
+// Check if another instance is already running
+if (file_exists($lockFile)) {
+    $lockTime = filemtime($lockFile);
+    $currentTime = time();
+
+    // If the lock file is older than the timeout, it's probably a stale lock
+    if ($currentTime - $lockTime < $lockTimeout) {
+        echo "[" . date('Y-m-d H:i:s') . "] Another cron job instance is already running. Exiting.\n";
+        exit(0); // Exit gracefully
+    } else {
+        echo "[" . date('Y-m-d H:i:s') . "] Found stale lock file. Removing it.\n";
+        unlink($lockFile); // Remove stale lock
+    }
+}
+
+// Create lock file
+file_put_contents($lockFile, date('Y-m-d H:i:s'));
+echo "[" . date('Y-m-d H:i:s') . "] Lock acquired.\n";
+
+// Register shutdown function to remove lock file when script ends
+register_shutdown_function(function() use ($lockFile) {
+    if (file_exists($lockFile)) {
+        unlink($lockFile);
+        echo "[" . date('Y-m-d H:i:s') . "] Lock released.\n";
+    }
+});
+
 // Load environment variables from .env file if it exists
 if (file_exists(__DIR__ . '/../.env')) {
     $dotenv = Dotenv::createImmutable(__DIR__ . '/../');
