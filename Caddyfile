@@ -1,0 +1,54 @@
+# /etc/caddy/Caddyfile
+{
+	# Enable FrankenPHP
+	frankenphp
+	# Enable Caddy's On-Demand TLS for automatic HTTPS certificates
+	# Requires the SERVER_NAME env var to be set to your domain name
+	# Caddy will obtain/renew certificates automatically using ACME (Let's Encrypt)
+	# Make sure your domain's A/AAAA records point to this server's public IP
+	# If you run this locally without a public domain/IP, comment this out
+	# or use `tls internal` for self-signed certificates (browser warning expected)
+	# on_demand_tls {
+	# 	ask http://localhost:8080/ask # Example internal endpoint to validate domain requests
+	# }
+	order php_server before file_server
+	# Optional: Set a global log format
+	log {
+		output stderr
+		format json
+	}
+	# Optional: Enable compression (commented out due to compatibility issue)
+	# encode zstd gzip
+}
+
+# Server block listening on specified ports (default: 80, 443)
+# Use the SERVER_NAME environment variable as the site address
+{$SERVER_NAME} {
+	# Set the web root (optional if files are in /app)
+	# root * /app/public
+
+	# Enable PHP processing via FrankenPHP for any .php files
+	# The root path needs to contain your PHP entry points if different from /app
+	php_server
+
+	# Optional: Add a simple health check endpoint
+	route /health {
+		respond "OK" 200
+	}
+
+	# Optional: Redirect HTTP to HTTPS (Caddy often handles this automatically with a domain)
+	# @http {
+	# 	protocol http
+	# }
+	# redir @http https://{host}{uri} permanent
+}
+
+# Fallback for local testing without a domain (listens on :443 with self-signed cert)
+# Uncomment this block if you are not using a public domain with SERVER_NAME
+#localhost:443 {
+#	tls internal
+#	php_server
+#	route /health {
+#		respond "OK" 200
+#	}
+#}

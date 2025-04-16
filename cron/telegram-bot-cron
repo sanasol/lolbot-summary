@@ -1,0 +1,13 @@
+# /etc/cron.d/telegram-bot-cron
+
+# Run the main polling script every minute. Redirect output to container logs and cron log.
+# * * * * * cd /app && php src/run.php >> /proc/1/fd/1 2>> /proc/1/fd/2 # Send stdout/stderr to Docker logs
+# Or log to a file if preferred:
+# * * * * * cd /app && php src/run.php >> /var/log/cron.log 2>&1
+
+# Run the daily summary check/cleanup script every hour at minute 0.
+0 * * * * cd /app && php src/cron_job.php >> /proc/1/fd/1 2>> /proc/1/fd/2 # Send stdout/stderr to Docker logs
+# Or log to a file:
+# 0 * * * * cd /app && php src/cron_job.php >> /var/log/cron.log 2>&1
+
+# IMPORTANT: Ensure this file has a trailing newline for cron to read it correctly.

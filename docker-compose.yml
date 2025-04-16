@@ -1,0 +1,29 @@
+services:
+  bot:
+    build: .
+    image: telegram-summary-bot
+    ports:
+      - "1180:80"
+    volumes:
+      # Mount source code but not overwrite system files
+      - ./src:/app/src
+      - ./config:/app/config
+      - ./composer.json:/app/composer.json
+      - ./composer.lock:/app/composer.lock
+      - ./Caddyfile:/etc/caddy/Caddyfile
+      # Persistent data storage
+      - ./data:/app/data
+      - caddy_data:/data
+      - caddy_config:/config
+    working_dir: /app
+    restart: unless-stopped
+    environment:
+      - TELEGRAM_BOT_TOKEN=${TELEGRAM_BOT_TOKEN}
+      - DEEPSEEK_API_KEY=${DEEPSEEK_API_KEY}
+      - XAI_API_KEY=${XAI_API_KEY}
+      - SERVER_NAME=${SERVER_NAME}
+
+volumes:
+  caddy_data:
+  caddy_config:
+

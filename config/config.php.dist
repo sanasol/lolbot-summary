@@ -1,0 +1,17 @@
+<?php
+
+// Copy this file to config.php and fill in your details.
+// Or preferably, use environment variables as defined in docker-compose.yml
+
+return [
+    'telegram_bot_token' => getenv('TELEGRAM_BOT_TOKEN') ?: 'YOUR_TELEGRAM_BOT_TOKEN',
+    'deepseek_api_key'   => getenv('DEEPSEEK_API_KEY') ?: 'YOUR_DEEPSEEK_API_KEY',
+    'xai_api_key'        => getenv('XAI_API_KEY') ?: 'YOUR_XAI_API_KEY',
+
+    // Optional: Specify the directory to store chat logs
+    'log_path' => __DIR__ . '/../data',
+
+    // Deepseek API details
+    'deepseek_api_url' => 'https://api.deepseek.com/chat/completions',
+    'deepseek_model' => 'deepseek-chat', // Or choose another suitable model
+];

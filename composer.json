@@ -1,0 +1,23 @@
+{
+    "name": "your_vendor/telegram-summary-bot",
+    "description": "A Telegram bot that summarizes group chats using DeepSeek API.",
+    "type": "project",
+    "require": {
+        "php": ">=8.1",
+        "longman/telegram-bot": "^0.80",
+        "guzzlehttp/guzzle": "^7.0",
+        "vlucas/phpdotenv": "^5.5"
+    },
+    "autoload": {
+        "psr-4": {
+            "App\\": "src/"
+        }
+    },
+    "config": {
+        "optimize-autoloader": true,
+        "preferred-install": "dist",
+        "sort-packages": true
+    },
+    "minimum-stability": "dev",
+    "prefer-stable": true
+}
