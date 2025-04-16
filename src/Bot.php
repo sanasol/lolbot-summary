@@ -501,6 +501,40 @@ class Bot
             if ($sendResult->isOk()) {
                 $logMessage = $logPrefix . "Summary successfully sent to chat {$chatId}";
                 file_put_contents($webhookLogFile, $logMessage . PHP_EOL, FILE_APPEND);
+
+                // Try to pin the message
+                try {
+                    $messageId = $sendResult->getResult()->getMessageId();
+
+                    if (!$messageId) {
+                        $logMessage = $logPrefix . "Cannot pin message in chat {$chatId}: Invalid message ID";
+                        file_put_contents($webhookLogFile, $logMessage . PHP_EOL, FILE_APPEND);
+                        error_log($logMessage);
+                    } else {
+                        $pinResult = Request::pinChatMessage([
+                            'chat_id' => $chatId,
+                            'message_id' => $messageId,
+                            'disable_notification' => true // Set to false if you want a notification when pinned
+                        ]);
+
+                        if ($pinResult->isOk()) {
+                            $logMessage = $logPrefix . "Summary message successfully pinned in chat {$chatId}";
+                            file_put_contents($webhookLogFile, $logMessage . PHP_EOL, FILE_APPEND);
+                        } else {
+                            $logMessage = $logPrefix . "Failed to pin summary message in chat {$chatId}: " . $pinResult->getDescription();
+                            file_put_contents($webhookLogFile, $logMessage . PHP_EOL, FILE_APPEND);
+                            error_log($logMessage);
+                        }
+                    }
+                } catch (TelegramException $e) {
+                    $logMessage = $logPrefix . "Telegram exception when pinning message in chat {$chatId}: " . $e->getMessage();
+                    file_put_contents($webhookLogFile, $logMessage . PHP_EOL, FILE_APPEND);
+                    error_log($logMessage);
+                } catch (\Exception $e) {
+                    $logMessage = $logPrefix . "Exception when pinning message in chat {$chatId}: " . $e->getMessage();
+                    file_put_contents($webhookLogFile, $logMessage . PHP_EOL, FILE_APPEND);
+                    error_log($logMessage);
+                }
             } else {
                 $logMessage = $logPrefix . "Failed to send summary to chat {$chatId}: " . $sendResult->getDescription();
                 file_put_contents($webhookLogFile, $logMessage . PHP_EOL, FILE_APPEND);
