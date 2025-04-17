@@ -39,43 +39,43 @@ class AIService
             file_put_contents($webhookLogFile, $logMessage . PHP_EOL, FILE_APPEND);
 
             // Check if the message is requesting an image generation or if user provided an image
-            $isImageRequest = $this->isImageGenerationRequest($messageText, $webhookLogFile, $logPrefix);
-
-            if ($isImageRequest) {
-                $logMessage = $logPrefix . "Detected " . ($inputImageUrl ? "image input" : "image generation request") . " from " . $username;
-                file_put_contents($webhookLogFile, $logMessage . PHP_EOL, FILE_APPEND);
-
-                // Generate image using OpenRouter API
-                $imageResult = $this->generateGrokImage($messageText, $webhookLogFile, $logPrefix, $inputImageUrl);
-
-                if ($imageResult) {
-                    // Check if we got an image URL
-                    if ($imageResult['url']) {
-                        return [
-                            'type' => 'image',
-                            'image_url' => $imageResult['url'],
-                            'content' => $imageResult['text_response'] ?? null, // Include text response if available
-                            'prompt' => $imageResult['prompt'],
-                            'revised_prompt' => $imageResult['revised_prompt']
-                        ];
-                    }
-                    // If we only got a text response (no image), return it as a text response
-                    elseif (isset($imageResult['text_response'])) {
-                        $logMessage = $logPrefix . "No image generated, but received text response. Returning as text.";
-                        file_put_contents($webhookLogFile, $logMessage . PHP_EOL, FILE_APPEND);
-
-                        return [
-                            'type' => 'text',
-                            'content' => $imageResult['text_response'],
-                            'image_url' => null
-                        ];
-                    }
-                }
-
-                // If image generation fails, fall back to text response
-                $logMessage = $logPrefix . "Image generation failed, falling back to text response";
-                file_put_contents($webhookLogFile, $logMessage . PHP_EOL, FILE_APPEND);
-            }
+//            $isImageRequest = $this->isImageGenerationRequest($messageText, $webhookLogFile, $logPrefix);
+//
+//            if ($isImageRequest) {
+//                $logMessage = $logPrefix . "Detected " . ($inputImageUrl ? "image input" : "image generation request") . " from " . $username;
+//                file_put_contents($webhookLogFile, $logMessage . PHP_EOL, FILE_APPEND);
+//
+//                // Generate image using OpenRouter API
+//                $imageResult = $this->generateGrokImage($messageText, $webhookLogFile, $logPrefix, $inputImageUrl);
+//
+//                if ($imageResult) {
+//                    // Check if we got an image URL
+//                    if ($imageResult['url']) {
+//                        return [
+//                            'type' => 'image',
+//                            'image_url' => $imageResult['url'],
+//                            'content' => $imageResult['text_response'] ?? null, // Include text response if available
+//                            'prompt' => $imageResult['prompt'],
+//                            'revised_prompt' => $imageResult['revised_prompt']
+//                        ];
+//                    }
+//                    // If we only got a text response (no image), return it as a text response
+//                    elseif (isset($imageResult['text_response'])) {
+//                        $logMessage = $logPrefix . "No image generated, but received text response. Returning as text.";
+//                        file_put_contents($webhookLogFile, $logMessage . PHP_EOL, FILE_APPEND);
+//
+//                        return [
+//                            'type' => 'text',
+//                            'content' => $imageResult['text_response'],
+//                            'image_url' => null
+//                        ];
+//                    }
+//                }
+//
+//                // If image generation fails, fall back to text response
+//                $logMessage = $logPrefix . "Image generation failed, falling back to text response";
+//                file_put_contents($webhookLogFile, $logMessage . PHP_EOL, FILE_APPEND);
+//            }
 
             // First, check if we should respond at all using structured output
             $shouldRespondPrompt = "Analyze this message and determine if it's asking a bot to do something, talking about a bot, or just mentioning it in passing. " .
@@ -660,14 +660,17 @@ class AIService
                 'json' => [
                     'model' => $this->config['openrouter_summary_model'],
                     'messages' => [
-                        ['role' => 'system', 'content' => 'You are a helpful assistant that summarizes Telegram group chats. Summary language must be language mostly used in messages, preferably Russian. Keep it concise and capture the main topics. 
+                        ['role' => 'system', 'content' => 'You are a helpful assistant that summarizes Telegram group chats. Summary language must be language mostly used in messages, preferably Russian. Keep it concise and capture the main topics. Make list of main topics with short description and links to messages
 
 If Chat Username is provided, create links to messages using the format: https://t.me/[username]/[message_id] where [username] is the Chat Username without @ and [message_id] is a message ID you can reference from the conversation.
 
 If only Chat ID is provided (no username), create link using the format: https://t.me/c/[channel_id]/[message_id] where [channel_id] is a channel ID you can reference from the conversation. Remove -100 from the beginning of the Channel ID if exists.
 
-When formatting your responses for Telegram, please use these special formatting conventions:
+When formatting your responses for Telegram, please use these special formatting conventions for HTML:
 use only this list of tags, dont use any other html tags
+!!dont use telegram markdown!!
+!!dont use telegram markdownv2!!
+use HTML for telegram
 <b>bold</b>, <strong>bold</strong>
 <i>italic</i>, <em>italic</em>
 <u>underline</u>, <ins>underline</ins>
@@ -710,7 +713,9 @@ use only this list of tags, dont use any other html tags
                 file_put_contents($webhookLogFile, $logMessage . PHP_EOL, FILE_APPEND);
                 file_put_contents($summaryLogFile, $logMessage . PHP_EOL, FILE_APPEND);
 
-                return $summary;
+                return $summary.'
+
+model:'.$this->config['openrouter_summary_model'];
             }
 
             // Log unexpected API response format

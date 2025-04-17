@@ -33,9 +33,9 @@ if (empty($config['telegram_bot_token']) || $config['telegram_bot_token'] === 'Y
     error_log('Webhook Error: Telegram Bot Token is not configured.');
     exit('Configuration error');
 }
-if (empty($config['xai_api_key']) || $config['xai_api_key'] === 'YOUR_XAI_API_KEY') {
+if (empty($config['openrouter_key']) || $config['openrouter_key'] === 'YOUR_OPENROUTER_KEY') {
     http_response_code(500);
-    error_log('Webhook Error: X.AI API Key is not configured.');
+    error_log('Webhook Error: OpenRouter API Key is not configured.');
     exit('Configuration error');
 }
 

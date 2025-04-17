@@ -6,12 +6,18 @@
 return [
     'telegram_bot_token' => getenv('TELEGRAM_BOT_TOKEN') ?: 'YOUR_TELEGRAM_BOT_TOKEN',
     'deepseek_api_key'   => getenv('DEEPSEEK_API_KEY') ?: 'YOUR_DEEPSEEK_API_KEY',
-    'xai_api_key'        => getenv('XAI_API_KEY') ?: 'YOUR_XAI_API_KEY',
+    'xai_api_key' => getenv('XAI_API_KEY') ?: 'YOUR_XAI_API_KEY',
+    'openrouter_key' => getenv('OPENROUTER_KEY') ?: 'YOUR_OPENROUTER_KEY',
 
     // Optional: Specify the directory to store chat logs
     'log_path' => __DIR__ . '/../data',
 
-    // Deepseek API details
-    'deepseek_api_url' => 'https://api.deepseek.com/chat/completions',
-    'deepseek_model' => 'deepseek-chat', // Or choose another suitable model
+    // OpenRouter API details
+    'openrouter_api_url' => 'https://openrouter.ai/api/v1/chat/completions',
+    'openrouter_summary_model' => 'x-ai/grok-3-beta', // Or choose another suitable model
+    'openrouter_chat_model' => 'x-ai/grok-3-beta', // Or choose another suitable model
+    'openrouter_vision_model' => 'x-ai/grok-2-vision-1212', // Or choose another suitable model
+    'openrouter_image_model' => 'google/gemini-2.5-pro-exp-03-25:free', // Or choose another suitable model
+    // Webhook configuration
+    'webhook_url' => getenv('WEBHOOK_URL') ?: '', // Set this to your webhook URL or use environment variable
 ];

@@ -19,8 +19,7 @@ services:
     restart: unless-stopped
     environment:
       - TELEGRAM_BOT_TOKEN=${TELEGRAM_BOT_TOKEN}
-      - DEEPSEEK_API_KEY=${DEEPSEEK_API_KEY}
-      - XAI_API_KEY=${XAI_API_KEY}
+      - OPENROUTER_KEY=${OPENROUTER_KEY}
       - SERVER_NAME=${SERVER_NAME}
 
 volumes:
