@@ -166,9 +166,23 @@ class Bot
                             }
                         }
                     }
-                    // Basic command handling example
-                    if ($message && $message->getText(true) === '/summary') {
-                        $this->handleSummaryCommand($message->getChat()->getId());
+                    // Command handling
+                    if ($message) {
+                        $messageText = $message->getText(false);
+                        $chatId = $message->getChat()->getId();
+                        $fromUser = $message->getFrom()->getUsername() ?? $message->getFrom()->getFirstName() ?? "Unknown";
+                        $messageId = $message->getMessageId();
+
+                        // Handle /summary command
+                        if ($messageText === '/summary') {
+                            $this->handleSummaryCommand($chatId);
+                        }
+                        // Handle /mcp command
+                        elseif (strpos($messageText, '/mcp') === 0) {
+                            // Extract the query part after the command
+                            $query = trim(substr($messageText, 4));
+                            $this->handleMCPCommand($chatId, $query, $fromUser, $messageId);
+                        }
                     }
                     // Add handling for other commands or message types here if needed
                 }
@@ -351,7 +365,7 @@ class Bot
                         $this->storeMessage($chatId, $timestamp, $username, $caption, $messageId);
                     }
 
-                    if ($messageText !== '/summary') {
+                    if ($messageText !== '/summary' && !str_starts_with($messageText, '/mcp')) {
                         // Check if the bot is mentioned in the message
                         // Use caption as message text if there's no text but there's a caption
                         $textToUse = $messageText ?: ($caption ?: '');
@@ -360,19 +374,35 @@ class Bot
                 }
             }
 
-            // Basic command handling example
-            if ($message && $message->getText(false) === '/summary') {
+            // Command handling
+            if ($message) {
                 $logPrefix = "[" . date('Y-m-d H:i:s') . "] [Webhook] ";
                 $webhookLogFile = $this->config['log_path'] . '/webhook_' . date('Y-m-d') . '.log';
 
                 $chatId = $message->getChat()->getId();
                 $chatTitle = $message->getChat()->getTitle() ?? "Unknown";
                 $fromUser = $message->getFrom()->getUsername() ?? $message->getFrom()->getFirstName() ?? "Unknown";
+                $messageId = $message->getMessageId();
 
-                $logMessage = $logPrefix . "Received /summary command in chat {$chatId} ({$chatTitle}) from user {$fromUser}";
-                file_put_contents($webhookLogFile, $logMessage . PHP_EOL, FILE_APPEND);
+                $messageText = $message->getText(false);
 
-                $this->handleSummaryCommand($chatId);
+                // Handle /summary command
+                if ($messageText === '/summary') {
+                    $logMessage = $logPrefix . "Received /summary command in chat {$chatId} ({$chatTitle}) from user {$fromUser}";
+                    file_put_contents($webhookLogFile, $logMessage . PHP_EOL, FILE_APPEND);
+
+                    $this->handleSummaryCommand($chatId);
+                }
+                // Handle /mcp command
+                if (str_starts_with($messageText, '/mcp')) {
+                    // Extract the query part after the command
+                    $query = trim(substr($messageText, 4));
+
+                    $logMessage = $logPrefix . "Received /mcp command in chat {$chatId} ({$chatTitle}) from user {$fromUser} with query: " . substr($query, 0, 50) . (strlen($query) > 50 ? '...' : '');
+                    file_put_contents($webhookLogFile, $logMessage . PHP_EOL, FILE_APPEND);
+
+                    $this->handleMCPCommand($chatId, $query, $fromUser, $messageId);
+                }
             }
 
             // Log all messages for debugging
@@ -700,6 +730,20 @@ class Bot
     }
 
     /**
+     * Generate a response using MCP (Multi-Content Payload) via AIService
+     *
+     * @param string $messageText The message text to process
+     * @param string $username The username of the message sender
+     * @param string $chatContext Optional context from recent chat messages
+     * @param array|null $tools Optional array of tool definitions for MCP
+     * @return array|null The generated response or null if generation failed
+     */
+    private function generateMCPResponse(string $messageText, string $username, string $chatContext = ''): ?array
+    {
+        return $this->aiService->generateMCPResponse($messageText, $username, $chatContext);
+    }
+
+    /**
      * Handle a bot mention in a message
      *
      * @param int $chatId The chat ID
@@ -709,6 +753,120 @@ class Bot
      * @param mixed $photos Photos from the message, if any
      * @return bool Whether the mention was handled successfully
      */
+
+    /**
+     * Handle the /mcp command to process a message using MCP tools
+     *
+     * @param int $chatId The chat ID
+     * @param string $messageText The message text after the command
+     * @param string $username The username of the message sender
+     * @param int $messageId The message ID to reply to
+     * @return bool Whether the command was handled successfully
+     */
+    private function handleMCPCommand(int $chatId, string $messageText, string $username, int $messageId): bool
+    {
+        $logPrefix = "[" . date('Y-m-d H:i:s') . "] [MCP Command] ";
+        $webhookLogFile = $this->config['log_path'] . '/webhook_' . date('Y-m-d') . '.log';
+
+        try {
+            // Log the command
+            $logMessage = $logPrefix . "Received MCP command in chat {$chatId} from {$username}: " . substr($messageText, 0, 50) . (strlen($messageText) > 50 ? '...' : '');
+            file_put_contents($webhookLogFile, $logMessage . PHP_EOL, FILE_APPEND);
+
+            // If no message text provided, send usage instructions
+            if (empty(trim($messageText))) {
+                $helpText = "Please provide a query after the /mcp command. For example:\n/mcp waaaaaat?";
+
+                $sendResult = Request::sendMessage([
+                    'chat_id' => $chatId,
+                    'text' => $helpText,
+                    'reply_to_message_id' => $messageId,
+                ]);
+
+                return $sendResult->isOk();
+            }
+
+            // Send a "typing" action to indicate the bot is working
+            Request::sendChatAction([
+                'chat_id' => $chatId,
+                'action' => 'typing',
+            ]);
+
+            // Get recent messages for context
+            $recentMessages = $this->getRecentChatContext($chatId);
+            $chatContext = '';
+
+            if (!empty($recentMessages)) {
+                $chatContext = "Recent conversation in the chat:\n" . implode("\n", $recentMessages) . "\n\n";
+                $logMessage = $logPrefix . "Added " . count($recentMessages) . " recent messages as context";
+                file_put_contents($webhookLogFile, $logMessage . PHP_EOL, FILE_APPEND);
+            }
+
+            // Generate response using MCP
+            $response = $this->generateMCPResponse($messageText, $username, $chatContext);
+
+            if ($response) {
+                // Check if there are tool calls that need to be processed
+                if (!empty($response['tool_calls'])) {
+                    $toolCallsInfo = "Tool calls detected:\n";
+                    foreach ($response['tool_calls'] as $toolCall) {
+                        $function = $toolCall['function'] ?? [];
+                        $name = $function['name'] ?? 'unknown';
+                        $args = $function['arguments'] ?? '{}';
+
+                        $toolCallsInfo .= "- {$name}: " . $args . "\n";
+                    }
+
+                    // For now, just inform about tool calls without actually executing them
+                    $responseText = $response['content'] . "\n\n" . $toolCallsInfo;
+                } else {
+                    $responseText = $response['content'];
+                }
+
+                // Send the response
+                $sendResult = Request::sendMessage([
+                    'chat_id' => $chatId,
+                    'text' => $responseText,
+                    'reply_to_message_id' => $messageId,
+                ]);
+
+                if ($sendResult->isOk()) {
+                    $logMessage = $logPrefix . "Successfully sent MCP response to chat {$chatId}";
+                    file_put_contents($webhookLogFile, $logMessage . PHP_EOL, FILE_APPEND);
+                    return true;
+                } else {
+                    $logMessage = $logPrefix . "Failed to send MCP response to chat {$chatId}: " . $sendResult->getDescription();
+                    file_put_contents($webhookLogFile, $logMessage . PHP_EOL, FILE_APPEND);
+                    error_log($logMessage);
+                }
+            } else {
+                $logMessage = $logPrefix . "Failed to generate MCP response for chat {$chatId}";
+                file_put_contents($webhookLogFile, $logMessage . PHP_EOL, FILE_APPEND);
+                error_log($logMessage);
+
+                Request::sendMessage([
+                    'chat_id' => $chatId,
+                    'text' => 'Sorry, I was unable to process your request at this time.',
+                    'reply_to_message_id' => $messageId,
+                ]);
+            }
+
+            return false;
+        } catch (\Exception $e) {
+            $logMessage = $logPrefix . "Error handling MCP command: " . $e->getMessage();
+            file_put_contents($webhookLogFile, $logMessage . PHP_EOL, FILE_APPEND);
+            error_log($logMessage);
+
+            Request::sendMessage([
+                'chat_id' => $chatId,
+                'text' => 'Sorry, an error occurred while processing your request.',
+                'reply_to_message_id' => $messageId,
+            ]);
+
+            return false;
+        }
+    }
+
     private function handleBotMention(int $chatId, string $messageText, string $username, int $replyToMessageId, $photos = null): bool
     {
         $logPrefix = "[" . date('Y-m-d H:i:s') . "] [Bot Mention] ";

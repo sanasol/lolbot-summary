@@ -28,12 +28,6 @@ $config = require $configPath;
 if (empty($config['telegram_bot_token']) || $config['telegram_bot_token'] === 'YOUR_TELEGRAM_BOT_TOKEN') {
     die('Error: Telegram Bot Token is not configured. Please set TELEGRAM_BOT_TOKEN environment variable or update config/config.php.' . PHP_EOL);
 }
-if (empty($config['deepseek_api_key']) || $config['deepseek_api_key'] === 'YOUR_DEEPSEEK_API_KEY') {
-    die('Error: DeepSeek API Key is not configured. Please set DEEPSEEK_API_KEY environment variable or update config/config.php.' . PHP_EOL);
-}
-if (empty($config['xai_api_key']) || $config['xai_api_key'] === 'YOUR_XAI_API_KEY') {
-    die('Error: X.AI API Key is not configured. Please set XAI_API_KEY environment variable or update config/config.php. '. $config['xai_api_key'] . PHP_EOL);
-}
 
 try {
     $bot = new Bot($config);

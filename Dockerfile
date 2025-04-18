@@ -10,6 +10,8 @@ USER root
 # and system dependencies (dcron for cron functionality)
 RUN install-php-extensions \
     zip \
+    pdo_mysql \
+    pdo \
     && apk add --no-cache dcron
 
 # Create app user and group for running as non-root
@@ -34,7 +36,6 @@ COPY . /app
 # Copy cron configuration and set permissions
 COPY cron/telegram-bot-cron /etc/cron.d/telegram-bot-cron
 RUN chmod 0644 /etc/cron.d/telegram-bot-cron \
-    && crontab /etc/cron.d/telegram-bot-cron \
     && touch /var/log/cron.log
 
 # Create and set permissions for data directory

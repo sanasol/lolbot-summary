@@ -18,6 +18,24 @@ return [
     'openrouter_chat_model' => 'x-ai/grok-3-beta', // Or choose another suitable model
     'openrouter_vision_model' => 'x-ai/grok-2-vision-1212', // Or choose another suitable model
     'openrouter_image_model' => 'google/gemini-2.5-pro-exp-03-25:free', // Or choose another suitable model
+
     // Webhook configuration
     'webhook_url' => getenv('WEBHOOK_URL') ?: '', // Set this to your webhook URL or use environment variable
+
+    // Clickhouse database configuration
+    'clickhouse' => [
+        'host' => getenv('CLICKHOUSE_HOST') ?: 'YOUR_CLICKHOUSE_HOST',
+        'port' => getenv('CLICKHOUSE_PORT') ?: 'YOUR_CLICKHOUSE_PORT',
+        'username' => getenv('CLICKHOUSE_USERNAME') ?: 'YOUR_CLICKHOUSE_USERNAME',
+        'password' => getenv('CLICKHOUSE_PASSWORD') ?: 'YOUR_CLICKHOUSE_PASSWORD',
+    ],
+
+    // Anthropic API configuration
+    'anthropic' => [
+        'key' => getenv('ANTHROPIC_API_KEY') ?: 'YOUR_ANTHROPIC_API_KEY',
+        'model' => getenv('ANTHROPIC_MODEL') ?: 'claude-3-5-sonnet-latest',
+    ],
+
+    // Clickhouse database definition
+    'clickhouse_db_definition' => '[{"table":"donators","description":"member/tippers list","columns":{"id":"UInt64 (default generateSnowflakeID())","name":"String"},"engine":"MergeTree","primary_key":"id","order_by":"id"},{"table":"messages_v2","description":"chat history for rooms","columns":{"rid":"UInt64","did":"UInt64","message":"String","message_id":"String","time":"DateTime","username":"String","is_broadcaster":"Bool","in_fanclub":"Bool","is_following":"Bool","is_mod":"Bool","has_tokens":"Bool","tipped_recently":"Bool","tipped_alot_recently":"Bool","tipped_tons_recently":"Bool","gender":"String"},"engine":"MergeTree","partition_by":"toYYYYMMDD(time)","primary_key":"(rid, time)","order_by":"(rid, time, did)"},{"table":"room_activity","description":"room online time","columns":{"rid":"UInt64","time":"DateTime"},"engine":"MergeTree","partition_by":"toYYYYMMDD(time)","primary_key":"(rid, time)","order_by":"(rid, time)"},{"table":"rooms","description":"rooms list","columns":{"id":"UInt64 (default generateSnowflakeID())","name":"String","gender":"UInt8","fans":"UInt32","last":"DateTime"},"engine":"MergeTree","primary_key":"(id, name)","order_by":"(id, name)"},{"table":"stats_v2","description":"room tokens/tips received","columns":{"did":"UInt64","rid":"UInt64","token":"UInt32","time":"DateTime","unix":"UInt32"},"engine":"MergeTree","partition_by":"toYYYYMMDD(time)","primary_key":"(rid, did, time)","order_by":"(rid, did, time, token)"},{"materialized_view":"income_details","description":"room tokens/tips statistics aggregated by date","columns":{"did":"UInt64","rid":"UInt64","tokens":"UInt64","time":"Date","donates":"UInt64"},"engine":"SummingMergeTree","primary_key":"(rid, did, time)","order_by":"(rid, did, time)","source_table":"stats_v2"},{"materialized_view":"room_last_activity","description":"room online time","columns":{"rid":"UInt64","last_time":"DateTime"},"engine":"ReplacingMergeTree","primary_key":"rid","order_by":"rid","source_table":"room_activity"}]',
 ];

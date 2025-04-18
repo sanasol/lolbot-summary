@@ -3,7 +3,12 @@
 namespace App\Services;
 
 use GuzzleHttp\Client as HttpClient;
+use GuzzleHttp\Exception\ClientException;
 use GuzzleHttp\Exception\RequestException;
+use NeuronAI\Chat\Messages\UserMessage;
+use NeuronAI\Chat\Messages\SystemMessage;
+use NeuronAI\Exceptions\NeuronException;
+use NeuronAI\Exceptions\ProviderException;
 
 class AIService
 {
@@ -16,6 +21,107 @@ class AIService
         $this->config = $config;
         $this->logPath = $config['log_path'] ?? (__DIR__ . '/../../data');
         $this->httpClient = new HttpClient();
+    }
+
+    /**
+     * Generate a response using ClickhouseAgent with MCP (Multi-Content Payload) support
+     *
+     * @param string $messageText The original message text
+     * @param string $username The username of the message sender
+     * @param string $chatContext Optional context from recent chat messages
+     * @param array|null $tools Optional array of tool definitions for MCP
+     * @return array|null The generated response or null if generation failed.
+     *                   Format: ['type' => 'text', 'content' => string, 'tool_calls' => array|null]
+     */
+    public function generateMCPResponse(string $messageText, string $username, string $chatContext = ''): ?array
+    {
+        $logPrefix = "[" . date('Y-m-d H:i:s') . "] [MCP Response] ";
+        $webhookLogFile = $this->config['log_path'] . '/webhook_' . date('Y-m-d') . '.log';
+
+        try {
+            // Log request
+            $logMessage = $logPrefix . "Generating MCP response for message: " . substr($messageText, 0, 50) . (strlen($messageText) > 50 ? '...' : '');
+            file_put_contents($webhookLogFile, $logMessage . PHP_EOL, FILE_APPEND);
+
+            // Create a user message with the input
+            $userMessage = new \NeuronAI\Chat\Messages\UserMessage("User {$username} says: {$messageText}");
+
+            // Initialize the ClickhouseAgent
+            $agent = \App\Services\ClickhouseAgent::make($this->config);
+            // Log that we're sending the message to the agent
+            $logMessage = $logPrefix . "Sending message to ClickhouseAgent";
+            file_put_contents($webhookLogFile, $logMessage . PHP_EOL, FILE_APPEND);
+
+            // Get response from the agent
+            $response = $agent->chat($userMessage);
+
+            // Extract content from the response
+            $content = $response->getContent();
+
+            // Log successful response generation
+            $logMessage = $logPrefix . "Generated response: " . substr($content, 0, 100) . (strlen($content) > 100 ? '...' : '');
+            file_put_contents($webhookLogFile, $logMessage . PHP_EOL, FILE_APPEND);
+
+            return [
+                'type' => 'text',
+                'content' => $content,
+            ];
+
+        } catch (ClientException $e) {
+            // Fired from AI providers and embedding providers
+            $logMessage = $logPrefix . "ClientException response: " . $e->getResponse()->getBody()->getContents();
+            file_put_contents($webhookLogFile, $logMessage . PHP_EOL, FILE_APPEND);
+
+            // Get the request object
+            $request = $e->getRequest();
+
+            // Log request URL
+            $logMessage = $logPrefix."Request URL: ".$request->getUri();
+            file_put_contents($webhookLogFile, $logMessage.PHP_EOL, FILE_APPEND);
+
+            // Log request method
+            $logMessage = $logPrefix."Request Method: ".$request->getMethod();
+            file_put_contents($webhookLogFile, $logMessage.PHP_EOL, FILE_APPEND);
+
+            // Log request headers
+            $logMessage = $logPrefix."Request Headers: ".json_encode($request->getHeaders());
+            file_put_contents($webhookLogFile, $logMessage.PHP_EOL, FILE_APPEND);
+
+            // Log request body
+            $requestBody = $request->getBody()->getContents();
+            $logMessage = $logPrefix."Request Body: ".$requestBody;
+            file_put_contents($webhookLogFile, $logMessage.PHP_EOL, FILE_APPEND);
+
+            // Try to decode and log JSON body in a more readable format if it's JSON
+            try {
+                $jsonBody = json_decode($requestBody, true);
+                if (json_last_error() === JSON_ERROR_NONE) {
+                    $logMessage = $logPrefix."Request JSON Body: ".json_encode($jsonBody, JSON_PRETTY_PRINT);
+                    file_put_contents($webhookLogFile, $logMessage.PHP_EOL, FILE_APPEND);
+                }
+            } catch (\Exception $jsonEx) {
+                $logMessage = $logPrefix."Failed to decode request body as JSON: ".$jsonEx->getMessage();
+                file_put_contents($logFile, $logMessage.PHP_EOL, FILE_APPEND);
+            }
+
+
+            return null;
+        } catch (NeuronException $e) {
+            // catch all the exception generated just from the agent
+            $logMessage = $logPrefix . "NeuronException response: " . $e->getMessage();
+            file_put_contents($webhookLogFile, $logMessage . PHP_EOL, FILE_APPEND);
+
+            return null;
+        } catch (\Exception $e) {
+            // Log general exception
+            $logMessage = $logPrefix . "Error generating MCP response: " . $e->getMessage();
+            file_put_contents($webhookLogFile, $logMessage . PHP_EOL, FILE_APPEND);
+
+            $logMessage = $logPrefix . "jsonerr: " . get_class($e);
+            file_put_contents($webhookLogFile, $logMessage . PHP_EOL, FILE_APPEND);
+
+            return null;
+        }
     }
 
     /**

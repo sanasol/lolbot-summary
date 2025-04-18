@@ -64,15 +64,6 @@ if (empty($config['telegram_bot_token']) || $config['telegram_bot_token'] === 'Y
     error_log('CRON ERROR: Telegram Bot Token is not configured.');
     exit(1);
 }
-if (empty($config['deepseek_api_key']) || $config['deepseek_api_key'] === 'YOUR_DEEPSEEK_API_KEY') {
-    error_log('CRON ERROR: DeepSeek API Key is not configured.');
-    exit(1);
-}
-if (empty($config['xai_api_key']) || $config['xai_api_key'] === 'YOUR_XAI_API_KEY') {
-    error_log('CRON ERROR: X.AI API Key is not configured.');
-    exit(1);
-}
-
 echo "[" . date('Y-m-d H:i:s') . "] Cron job started.\n";
 
 try {
