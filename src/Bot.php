@@ -109,123 +109,6 @@ class Bot
         $this->saveMessagesToFile($chatId);
     }
 
-    /**
-     * Process one batch of updates from Telegram.
-     * Intended to be called periodically (e.g., by cron).
-     */
-    public function processUpdates(): void
-    {
-        try {
-            $server_response = $this->telegram->handleGetUpdates();
-
-            if ($server_response->isOk()) {
-                $update_count = count($server_response->getResult());
-
-                $logPrefix = "[" . date('Y-m-d H:i:s') . "] [Updates] ";
-                $updatesLogFile = $this->config['log_path'] . '/updates_' . date('Y-m-d') . '.log';
-
-                if ($update_count > 0) {
-                    $logMessage = $logPrefix . "Processing {$update_count} updates";
-                    file_put_contents($updatesLogFile, $logMessage . PHP_EOL, FILE_APPEND);
-                    echo date('Y-m-d H:i:s') . ' - Processing ' . $update_count . " updates\n";
-                } else {
-                    $logMessage = $logPrefix . "No new updates to process";
-                    file_put_contents($updatesLogFile, $logMessage . PHP_EOL, FILE_APPEND);
-                }
-
-                /** @var Update $update */
-                foreach ($server_response->getResult() as $update) {
-                    $message = $update->getMessage() ?? $update->getEditedMessage();
-                    if ($message && ($message->getChat()->isGroupChat() || $message->getChat()->isSuperGroup())) {
-                        $chatId = $message->getChat()->getId();
-                        $messageText = $message->getText();
-                        $timestamp = $message->getDate();
-                        $userId = $message->getFrom()->getId();
-                        $username = $message->getFrom()->getUsername() ?? $message->getFrom()->getFirstName();
-                        $messageId = $message->getMessageId();
-
-                        // Get photos from the message if any
-                        $photos = $message->getPhoto();
-
-                        // Get caption if available (for photos)
-                        $caption = $message->getCaption();
-
-                        if ($messageText || $photos) {
-                            if ($messageText) {
-                                $this->storeMessage($chatId, $timestamp, $username, $messageText, $messageId);
-                            } else if ($caption) {
-                                // Store caption as message if there's no text but there's a caption
-                                $this->storeMessage($chatId, $timestamp, $username, $caption, $messageId);
-                            }
-
-                            // Check if the bot is mentioned in the message
-                            if ($messageText !== '/summary') {
-                                // Use caption as message text if there's no text but there's a caption
-                                $textToUse = $messageText ?: ($caption ?: '');
-                                $this->handleBotMention($chatId, $textToUse, $username, $messageId, $photos ? $photos : null);
-                            }
-                        }
-                    }
-                    // Command handling
-                    if ($message) {
-                        $messageText = $message->getText(false);
-                        $chatId = $message->getChat()->getId();
-                        $fromUser = $message->getFrom()->getUsername() ?? $message->getFrom()->getFirstName() ?? "Unknown";
-                        $messageId = $message->getMessageId();
-
-                        // Handle /summary command
-                        if ($messageText === '/summary') {
-                            $this->handleSummaryCommand($chatId);
-                        }
-                        // Handle /mcp command
-                        elseif (strpos($messageText, '/mcp') === 0) {
-                            // Extract the query part after the command
-                            $query = trim(substr($messageText, 4));
-                            $this->handleMCPCommand($chatId, $query, $fromUser, $messageId);
-                        }
-                    }
-                    // Add handling for other commands or message types here if needed
-                }
-            } else {
-                $logPrefix = "[" . date('Y-m-d H:i:s') . "] [Updates] ";
-                $updatesLogFile = $this->config['log_path'] . '/updates_' . date('Y-m-d') . '.log';
-                $errorLogFile = $this->config['log_path'] . '/error_' . date('Y-m-d') . '.log';
-
-                $logMessage = $logPrefix . "Failed to fetch updates: " . $server_response->getDescription();
-                file_put_contents($updatesLogFile, $logMessage . PHP_EOL, FILE_APPEND);
-                file_put_contents($errorLogFile, $logMessage . PHP_EOL, FILE_APPEND);
-                error_log($logMessage);
-                // Don't sleep here; cron controls the interval
-            }
-            // Note: Daily summary sending is handled by the separate cron job calling checkAndSendDailySummaries()
-
-        } catch (TelegramException $e) {
-            $logPrefix = "[" . date('Y-m-d H:i:s') . "] [Updates Error] ";
-            $updatesLogFile = $this->config['log_path'] . '/updates_' . date('Y-m-d') . '.log';
-            $errorLogFile = $this->config['log_path'] . '/error_' . date('Y-m-d') . '.log';
-
-            $logMessage = $logPrefix . "Telegram API Error: " . $e->getMessage();
-            file_put_contents($updatesLogFile, $logMessage . PHP_EOL, FILE_APPEND);
-            file_put_contents($errorLogFile, $logMessage . PHP_EOL, FILE_APPEND);
-            error_log($logMessage);
-
-            // Throw the exception so the cron job can log it and exit with error
-            throw $e;
-        } catch (\Throwable $e) {
-            $logPrefix = "[" . date('Y-m-d H:i:s') . "] [Updates Error] ";
-            $updatesLogFile = $this->config['log_path'] . '/updates_' . date('Y-m-d') . '.log';
-            $errorLogFile = $this->config['log_path'] . '/error_' . date('Y-m-d') . '.log';
-
-            $logMessage = $logPrefix . "General Error: " . $e->getMessage() . "\nStack Trace:\n" . $e->getTraceAsString();
-            file_put_contents($updatesLogFile, $logMessage . PHP_EOL, FILE_APPEND);
-            file_put_contents($errorLogFile, $logMessage . PHP_EOL, FILE_APPEND);
-            error_log($logMessage);
-
-            // Throw the exception
-            throw $e;
-        }
-    }
-
     private function getRecentMessages(int $chatId, int $hours = 24): array
     {
         // Make sure we have the latest messages from file
@@ -358,18 +241,94 @@ class Bot
                 $caption = $message->getCaption();
 
                 if ($messageText || $photos) {
-                    if ($messageText) {
+                    // Process and store text message (only if there are no photos)
+                    if ($messageText && empty($photos)) {
                         $this->storeMessage($chatId, $timestamp, $username, $messageText, $messageId);
-                    } else if ($caption) {
-                        // Store caption as message if there's no text but there's a caption
-                        $this->storeMessage($chatId, $timestamp, $username, $caption, $messageId);
+                    }
+
+                    // Process images if present
+                    if ($photos && !empty($photos)) {
+                        $logPrefix = "[" . date('Y-m-d H:i:s') . "] [Image Processing] ";
+                        $webhookLogFile = $this->config['log_path'] . '/webhook_' . date('Y-m-d') . '.log';
+
+                        try {
+                            // Get the largest photo (last in the array)
+                            $largestPhoto = end($photos);
+
+                            // Get the file ID from the PhotoSize object
+                            $fileId = $largestPhoto->getFileId();
+
+                            $logMessage = $logPrefix . "Processing image with file ID: " . $fileId;
+                            file_put_contents($webhookLogFile, $logMessage . PHP_EOL, FILE_APPEND);
+
+                            // Get the file path from Telegram
+                            $fileResult = Request::getFile(['file_id' => $fileId]);
+
+                            if ($fileResult->isOk()) {
+                                $filePath = $fileResult->getResult()->getFilePath();
+
+                                // Construct the full URL to the file
+                                $imageUrl = 'https://api.telegram.org/file/bot' . $this->config['telegram_bot_token'] . '/' . $filePath;
+
+                                // Create a temporary file to store the image
+                                $tmpFile = tempnam(sys_get_temp_dir(), 'telegram_img_');
+
+                                // Download the image to the temporary file
+                                $imageData = file_get_contents($imageUrl);
+                                if ($imageData !== false) {
+                                    file_put_contents($tmpFile, $imageData);
+
+                                    // Convert image to base64
+                                    $base64Image = base64_encode($imageData);
+
+                                    $logMessage = $logPrefix . "Image saved to temporary file: " . $tmpFile;
+                                    file_put_contents($webhookLogFile, $logMessage . PHP_EOL, FILE_APPEND);
+
+                                    // Generate description for the image using base64
+                                    $imageDescription = $this->aiService->generateImageDescription($base64Image, true, $caption);
+
+                                    // Clean up the temporary file
+                                    @unlink($tmpFile);
+                                } else {
+                                    $logMessage = $logPrefix . "Failed to download image from URL: " . $imageUrl;
+                                    file_put_contents($webhookLogFile, $logMessage . PHP_EOL, FILE_APPEND);
+                                    $imageDescription = null;
+                                }
+
+                                if ($imageDescription) {
+                                    // Format the image description with caption if available
+                                    $formattedDescription = "[IMAGE: " . $imageDescription . "]";
+
+                                    // Add caption to the description if available
+                                    if ($caption) {
+                                        $formattedDescription = $caption . " " . $formattedDescription;
+                                    }
+
+                                    // Store the image description in chat history
+                                    $this->storeMessage($chatId, $timestamp, $username, $formattedDescription, $messageId);
+
+                                    $logMessage = $logPrefix . "Stored image with description: " . $formattedDescription;
+                                    file_put_contents($webhookLogFile, $logMessage . PHP_EOL, FILE_APPEND);
+                                }
+                            } else {
+                                $logMessage = $logPrefix . "Failed to get file path for photo: " . $fileResult->getDescription();
+                                file_put_contents($webhookLogFile, $logMessage . PHP_EOL, FILE_APPEND);
+                            }
+                        } catch (\Exception $e) {
+                            $logMessage = $logPrefix . "Error processing image: " . $e->getMessage();
+                            file_put_contents($webhookLogFile, $logMessage . PHP_EOL, FILE_APPEND);
+                        }
                     }
 
                     if ($messageText !== '/summary' && !str_starts_with($messageText, '/mcp')) {
                         // Check if the bot is mentioned in the message
                         // Use caption as message text if there's no text but there's a caption
                         $textToUse = $messageText ?: ($caption ?: '');
-                        $this->handleBotMention($chatId, $textToUse, $username, $messageId, $photos ? $photos : null);
+
+                        // If we have an image description, pass it to handleBotMention
+                        $imageDescriptionToUse = isset($formattedDescription) ? $formattedDescription : null;
+
+                        $this->handleBotMention($chatId, $textToUse, $username, $messageId, $photos ? $photos : null, $imageDescriptionToUse);
                     }
                 }
             }
@@ -726,7 +685,9 @@ class Bot
      */
     private function generateGrokResponse(string $messageText, string $username, string $chatContext = '', ?string $inputImageUrl = null): ?array
     {
-        return $this->aiService->generateGrokResponse($messageText, $username, $chatContext, $inputImageUrl);
+        // If inputImageUrl is provided, it's a base64-encoded image
+        $isBase64 = $inputImageUrl !== null;
+        return $this->aiService->generateGrokResponse($messageText, $username, $chatContext, $inputImageUrl, $isBase64);
     }
 
     /**
@@ -867,7 +828,7 @@ class Bot
         }
     }
 
-    private function handleBotMention(int $chatId, string $messageText, string $username, int $replyToMessageId, $photos = null): bool
+    private function handleBotMention(int $chatId, string $messageText, string $username, int $replyToMessageId, $photos = null, ?string $imageDescription = null): bool
     {
         $logPrefix = "[" . date('Y-m-d H:i:s') . "] [Bot Mention] ";
         $webhookLogFile = $this->config['log_path'] . '/webhook_' . date('Y-m-d') . '.log';
@@ -883,42 +844,20 @@ class Bot
 
         // Check if the message contains a photo
         $inputImageUrl = null;
-        if ($photos && !empty($photos)) {
-            try {
-                // Log photo information for debugging
-                $logMessage = $logPrefix . "Photo object type: " . gettype($photos);
-                file_put_contents($webhookLogFile, $logMessage . PHP_EOL, FILE_APPEND);
 
-                // Get the largest photo (last in the array)
-                $largestPhoto = end($photos);
+        // If we already have an image description from the caller, use it
+        if ($imageDescription) {
+            $logMessage = $logPrefix . "Using provided image description: " . $imageDescription;
+            file_put_contents($webhookLogFile, $logMessage . PHP_EOL, FILE_APPEND);
 
-                // Get the file ID from the PhotoSize object
-                $fileId = $largestPhoto->getFileId();
-
-                $logMessage = $logPrefix . "Using file ID: " . $fileId;
-                file_put_contents($webhookLogFile, $logMessage . PHP_EOL, FILE_APPEND);
-
-                // Get the file path from Telegram
-                $fileResult = Request::getFile(['file_id' => $fileId]);
-
-                if ($fileResult->isOk()) {
-                    $filePath = $fileResult->getResult()->getFilePath();
-
-                    // Construct the full URL to the file
-                    $inputImageUrl = 'https://api.telegram.org/file/bot' . $this->config['telegram_bot_token'] . '/' . $filePath;
-
-                    $logMessage = $logPrefix . "Found image in message: " . $inputImageUrl;
-                    file_put_contents($webhookLogFile, $logMessage . PHP_EOL, FILE_APPEND);
-                } else {
-                    $logMessage = $logPrefix . "Failed to get file path for photo: " . $fileResult->getDescription();
-                    file_put_contents($webhookLogFile, $logMessage . PHP_EOL, FILE_APPEND);
-                }
-            } catch (\Exception $e) {
-                $logMessage = $logPrefix . "Error processing photo: " . $e->getMessage();
-                file_put_contents($webhookLogFile, $logMessage . PHP_EOL, FILE_APPEND);
-                error_log($logMessage);
+            // Add image description to the message text for better context
+            if (!empty($messageText)) {
+                $messageText .= "\n\n" . $imageDescription;
+            } else {
+                $messageText = $imageDescription;
             }
         }
+        // Otherwise, process the photo if available and generate a description
 
         // Get recent messages from the chat for context (last 10 messages or from the last 30 minutes)
         $recentMessages = $this->getRecentChatContext($chatId);

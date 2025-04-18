@@ -134,7 +134,7 @@ class AIService
      * @return array|null The generated response or null if generation failed.
      *                   Format: ['type' => 'text|image', 'content' => string, 'image_url' => string|null]
      */
-    public function generateGrokResponse(string $messageText, string $username, string $chatContext = '', ?string $inputImageUrl = null): ?array
+    public function generateGrokResponse(string $messageText, string $username, string $chatContext = '', ?string $inputImageUrl = null, bool $isBase64 = false): ?array
     {
         $logPrefix = "[" . date('Y-m-d H:i:s') . "] [Grok Response] ";
         $webhookLogFile = $this->config['log_path'] . '/webhook_' . date('Y-m-d') . '.log';
@@ -691,6 +691,107 @@ class AIService
             // Log any other exceptions
             $errorMessage = $logPrefix . "Error extracting image prompt: " . $e->getMessage();
             file_put_contents($logFile, $errorMessage . PHP_EOL, FILE_APPEND);
+            return null;
+        }
+    }
+
+    /**
+     * Generate a description for an image using vision model
+     *
+     * @param string $imageData URL of the image or base64-encoded image data
+     * @param bool $isBase64 Whether the image data is base64-encoded
+     * @return string|null The generated description or null if generation failed
+     */
+    public function generateImageDescription(string $imageData, bool $isBase64 = false, ?string $caption = ''): ?string
+    {
+        $logPrefix = "[" . date('Y-m-d H:i:s') . "] [Image Description] ";
+        $webhookLogFile = $this->config['log_path'] . '/webhook_' . date('Y-m-d') . '.log';
+
+        try {
+            if ($isBase64) {
+                $logMessage = $logPrefix . "Generating description for base64-encoded image";
+            } else {
+                $logMessage = $logPrefix . "Generating description for image URL: " . $imageData;
+            }
+            file_put_contents($webhookLogFile, $logMessage . PHP_EOL, FILE_APPEND);
+
+            // Prepare the image URL structure based on whether it's base64 or a URL
+            $imageUrlStructure = [];
+            if ($isBase64) {
+                // For base64-encoded images
+                $imageUrlStructure = [
+                    'url' => "data:image/jpeg;base64," . $imageData
+                ];
+            } else {
+                // For regular URLs
+                $imageUrlStructure = [
+                    'url' => $imageData
+                ];
+            }
+
+            // Use vision model to analyze the image
+            $response = $this->httpClient->post($this->config['openrouter_api_url'], [
+                'headers' => [
+                    'Authorization' => 'Bearer ' . $this->config['openrouter_key'],
+                    'Content-Type'  => 'application/json',
+                ],
+                'json' => [
+                    'model' => $this->config['openrouter_vision_model'],
+                    'messages' => [
+                        [
+                            'role' => 'system',
+                            'content' => 'You are an assistant that provides concise, accurate descriptions of images. Describe what you see in 1-5 sentences.'
+                        ],
+                        [
+                            'role' => 'user',
+                            'content' => [
+                                [
+                                    'type' => 'text',
+                                    'text' => "Describe this image in detail but concisely. Image caption: \"$caption\"."
+                                ],
+                                [
+                                    'type' => 'image_url',
+                                    'image_url' => $imageUrlStructure
+                                ]
+                            ]
+                        ]
+                    ],
+                    'max_tokens' => 1000,
+                    'temperature' => 0.3,
+                ],
+                'timeout' => 30,
+            ]);
+
+            $responseContent = $response->getBody()->getContents();
+            $logMessage = $logPrefix . "Raw API response: " . $responseContent;
+            file_put_contents($webhookLogFile, $logMessage . PHP_EOL, FILE_APPEND);
+
+            $body = json_decode($responseContent, true);
+
+            // Standard response parsing for /chat/completions
+            if (isset($body['choices'][0]['message']['content'])) {
+                $description = trim($body['choices'][0]['message']['content']);
+                $logMessage = $logPrefix . "Generated description: " . $description;
+                file_put_contents($webhookLogFile, $logMessage . PHP_EOL, FILE_APPEND);
+                return $description;
+            } else {
+                $logMessage = $logPrefix . "Failed to extract description. Response structure might be different.";
+                file_put_contents($webhookLogFile, $logMessage . PHP_EOL, FILE_APPEND);
+                return null;
+            }
+
+        } catch (RequestException $e) {
+            // Log Guzzle request exceptions
+            $errorMessage = $logPrefix . "HTTP Request failed: " . $e->getMessage();
+            if ($e->hasResponse()) {
+                $errorMessage .= " | Response: " . $e->getResponse()->getBody()->getContents();
+            }
+            file_put_contents($webhookLogFile, $errorMessage . PHP_EOL, FILE_APPEND);
+            return null;
+        } catch (\Exception $e) {
+            // Log any other exceptions
+            $errorMessage = $logPrefix . "Error generating image description: " . $e->getMessage();
+            file_put_contents($webhookLogFile, $errorMessage . PHP_EOL, FILE_APPEND);
             return null;
         }
     }
