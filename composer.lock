@@ -4,7 +4,7 @@
         "Read more about it at https://getcomposer.org/doc/01-basic-usage.md#installing-dependencies",
         "This file is @generated automatically"
     ],
-    "content-hash": "7a44e895586b3fe1f0c02b2e29e4c6a7",
+    "content-hash": "03b31020ad40b850783c029bf2b46495",
     "packages": [
         {
             "name": "doctrine/deprecations",
@@ -442,17 +442,66 @@
             "time": "2025-03-27T12:30:47+00:00"
         },
         {
-            "name": "inspector-apm/neuron-ai",
-            "version": "1.9.6",
+            "name": "inspector-apm/inspector-php",
+            "version": "3.12.0",
             "source": {
                 "type": "git",
-                "url": "https://github.com/inspector-apm/neuron-ai.git",
-                "reference": "3a7aa690e11088a443f36439dba169c9fe34117b"
+                "url": "https://github.com/inspector-apm/inspector-php.git",
+                "reference": "a9a00d78b1bba249ad02a15f3d25fc85b4157830"
             },
             "dist": {
                 "type": "zip",
-                "url": "https://api.github.com/repos/inspector-apm/neuron-ai/zipball/3a7aa690e11088a443f36439dba169c9fe34117b",
-                "reference": "3a7aa690e11088a443f36439dba169c9fe34117b",
+                "url": "https://api.github.com/repos/inspector-apm/inspector-php/zipball/a9a00d78b1bba249ad02a15f3d25fc85b4157830",
+                "reference": "a9a00d78b1bba249ad02a15f3d25fc85b4157830",
+                "shasum": ""
+            },
+            "require": {
+                "php": ">=7.2"
+            },
+            "require-dev": {
+                "inspector-apm/neuron-ai": "^1.2.22",
+                "phpunit/phpunit": "^9.0"
+            },
+            "type": "library",
+            "autoload": {
+                "psr-4": {
+                    "Inspector\\": "src/"
+                }
+            },
+            "notification-url": "https://packagist.org/downloads/",
+            "license": [
+                "MIT"
+            ],
+            "authors": [
+                {
+                    "name": "Valerio Barbera",
+                    "email": "valerio@inspector.dev"
+                }
+            ],
+            "description": "Inspector for PHP applications.",
+            "keywords": [
+                "inspector",
+                "monitoring",
+                "php"
+            ],
+            "support": {
+                "issues": "https://github.com/inspector-apm/inspector-php/issues",
+                "source": "https://github.com/inspector-apm/inspector-php/tree/3.12.0"
+            },
+            "time": "2025-03-07T10:14:49+00:00"
+        },
+        {
+            "name": "inspector-apm/neuron-ai",
+            "version": "1.9.8",
+            "source": {
+                "type": "git",
+                "url": "https://github.com/inspector-apm/neuron-ai.git",
+                "reference": "af60c77f62b639b3f56db7e6e38cd189316391cd"
+            },
+            "dist": {
+                "type": "zip",
+                "url": "https://api.github.com/repos/inspector-apm/neuron-ai/zipball/af60c77f62b639b3f56db7e6e38cd189316391cd",
+                "reference": "af60c77f62b639b3f56db7e6e38cd189316391cd",
                 "shasum": ""
             },
             "require": {
@@ -500,9 +549,9 @@
             "description": "PHP AI Framework with built-in observability.",
             "support": {
                 "issues": "https://github.com/inspector-apm/neuron-ai/issues",
-                "source": "https://github.com/inspector-apm/neuron-ai/tree/1.9.6"
+                "source": "https://github.com/inspector-apm/neuron-ai/tree/1.9.8"
             },
-            "time": "2025-04-17T10:04:35+00:00"
+            "time": "2025-04-24T17:48:26+00:00"
         },
         {
             "name": "longman/telegram-bot",
@@ -1208,6 +1257,65 @@
                 "source": "https://github.com/ralouphie/getallheaders/tree/develop"
             },
             "time": "2019-03-08T08:55:37+00:00"
+        },
+        {
+            "name": "smi2/phpclickhouse",
+            "version": "1.6.0",
+            "source": {
+                "type": "git",
+                "url": "https://github.com/smi2/phpClickHouse.git",
+                "reference": "f79dfb798df96185beff90891efda997b01eb51b"
+            },
+            "dist": {
+                "type": "zip",
+                "url": "https://api.github.com/repos/smi2/phpClickHouse/zipball/f79dfb798df96185beff90891efda997b01eb51b",
+                "reference": "f79dfb798df96185beff90891efda997b01eb51b",
+                "shasum": ""
+            },
+            "require": {
+                "ext-curl": "*",
+                "ext-json": "*",
+                "php": "^8.0"
+            },
+            "require-dev": {
+                "doctrine/coding-standard": "^8.2",
+                "phpstan/phpstan": "^0.12",
+                "phpunit/phpunit": "^9.5",
+                "sebastian/comparator": "^4.0"
+            },
+            "type": "library",
+            "autoload": {
+                "psr-4": {
+                    "ClickHouseDB\\": "src/"
+                }
+            },
+            "notification-url": "https://packagist.org/downloads/",
+            "license": [
+                "MIT"
+            ],
+            "authors": [
+                {
+                    "name": "Igor Strykhar",
+                    "email": "isublimity@gmail.com",
+                    "homepage": "https://github.com/isublimity"
+                }
+            ],
+            "description": "PHP ClickHouse Client",
+            "homepage": "https://github.com/smi2/phpClickHouse",
+            "keywords": [
+                "clickhouse",
+                "client",
+                "curl",
+                "driver",
+                "http",
+                "http client",
+                "php"
+            ],
+            "support": {
+                "issues": "https://github.com/smi2/phpClickHouse/issues",
+                "source": "https://github.com/smi2/phpClickHouse/tree/1.6.0"
+            },
+            "time": "2025-01-15T07:04:59+00:00"
         },
         {
             "name": "symfony/deprecation-contracts",
@@ -2496,7 +2604,8 @@
     "prefer-stable": true,
     "prefer-lowest": false,
     "platform": {
-        "php": ">=8.1"
+        "php": ">=8.1",
+        "ext-pdo": "*"
     },
     "platform-dev": [],
     "plugin-api-version": "2.3.0"

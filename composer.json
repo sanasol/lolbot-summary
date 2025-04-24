@@ -4,11 +4,13 @@
     "type": "project",
     "require": {
         "php": ">=8.1",
+        "ext-pdo": "*",
         "guzzlehttp/guzzle": "^7.0",
+        "inspector-apm/inspector-php": "^3.12",
         "inspector-apm/neuron-ai": "^1.9",
         "longman/telegram-bot": "^0.80",
-        "vlucas/phpdotenv": "^5.5",
-      "ext-pdo": "*"
+        "smi2/phpclickhouse": "^1.6",
+        "vlucas/phpdotenv": "^5.5"
     },
     "autoload": {
         "psr-4": {

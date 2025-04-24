@@ -55,12 +55,18 @@ try {
     // Instantiate the bot
     $bot = new Bot($config);
 
-    // Process the webhook update
-    $bot->processWebhook($content);
+    // Process the webhook update - this will return immediately and process in the background
+    $result = $bot->processWebhook($content);
 
-    // Return a 200 OK response to Telegram
-    http_response_code(200);
-    exit('OK');
+    if ($result) {
+        // Return a 200 OK response to Telegram immediately
+        http_response_code(200);
+        exit('OK');
+    } else {
+        // If there was a validation error, return a 400 Bad Request
+        http_response_code(400);
+        exit('Invalid webhook data');
+    }
 
 } catch (\Throwable $e) {
     // Log the error

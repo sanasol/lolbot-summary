@@ -1,7 +1,19 @@
 # /etc/caddy/Caddyfile
 {
 	# Enable FrankenPHP
-	frankenphp
+	frankenphp {
+		# Set PHP max execution time to 120 seconds
+		php_ini max_execution_time 120
+	}
+	# Set Caddy timeouts to 120 seconds
+	servers {
+		timeouts {
+			read_header 120s
+			read_body 120s
+			write 120s
+			idle 120s
+		}
+	}
 	# Enable Caddy's On-Demand TLS for automatic HTTPS certificates
 	# Requires the SERVER_NAME env var to be set to your domain name
 	# Caddy will obtain/renew certificates automatically using ACME (Let's Encrypt)
@@ -12,9 +24,9 @@
 	# 	ask http://localhost:8080/ask # Example internal endpoint to validate domain requests
 	# }
 	order php_server before file_server
-	# Optional: Set a global log format
+	# Global log configuration
 	log {
-		output stderr
+		output file /app/data/caddy-access.log
 		format json
 	}
 	# Optional: Enable compression (commented out due to compatibility issue)
@@ -29,7 +41,11 @@
 
 	# Enable PHP processing via FrankenPHP for any .php files
 	# The root path needs to contain your PHP entry points if different from /app
-	php_server
+	php_server {
+		# Configure FrankenPHP request and error logs
+		access_log /app/data/php-access.log
+		error_log /app/data/php-error.log
+	}
 
 	# Optional: Add a simple health check endpoint
 	route /health {
@@ -47,7 +63,11 @@
 # Uncomment this block if you are not using a public domain with SERVER_NAME
 #localhost:443 {
 #	tls internal
-#	php_server
+#	php_server {
+#		# Configure FrankenPHP request and error logs
+#		access_log /app/data/php-access.log
+#		error_log /app/data/php-error.log
+#	}
 #	route /health {
 #		respond "OK" 200
 #	}

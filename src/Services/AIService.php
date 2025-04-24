@@ -5,22 +5,37 @@ namespace App\Services;
 use GuzzleHttp\Client as HttpClient;
 use GuzzleHttp\Exception\ClientException;
 use GuzzleHttp\Exception\RequestException;
+use Inspector\Configuration;
 use NeuronAI\Chat\Messages\UserMessage;
 use NeuronAI\Chat\Messages\SystemMessage;
 use NeuronAI\Exceptions\NeuronException;
 use NeuronAI\Exceptions\ProviderException;
+use NeuronAI\Observability\AgentMonitoring;
 
 class AIService
 {
     private HttpClient $httpClient;
     private array $config;
     private string $logPath;
+    private ?SettingsService $settingsService = null;
 
-    public function __construct(array $config)
+    public function __construct(array $config, ?SettingsService $settingsService = null)
     {
         $this->config = $config;
         $this->logPath = $config['log_path'] ?? (__DIR__ . '/../../data');
         $this->httpClient = new HttpClient();
+        $this->settingsService = $settingsService;
+    }
+
+    /**
+     * Set the settings service
+     *
+     * @param SettingsService $settingsService
+     * @return void
+     */
+    public function setSettingsService(SettingsService $settingsService): void
+    {
+        $this->settingsService = $settingsService;
     }
 
     /**
@@ -30,10 +45,11 @@ class AIService
      * @param string $username The username of the message sender
      * @param string $chatContext Optional context from recent chat messages
      * @param array|null $tools Optional array of tool definitions for MCP
-     * @return array|null The generated response or null if generation failed.
-     *                   Format: ['type' => 'text', 'content' => string, 'tool_calls' => array|null]
+     * @return array The generated response.
+     *              Format: ['type' => 'text', 'content' => string, 'tool_calls' => array|null]
+     *              Or error: ['type' => 'error', 'content' => string, 'error_type' => string]
      */
-    public function generateMCPResponse(string $messageText, string $username, string $chatContext = ''): ?array
+    public function generateMCPResponse(string $messageText, string $username, string $chatContext = ''): array
     {
         $logPrefix = "[" . date('Y-m-d H:i:s') . "] [MCP Response] ";
         $webhookLogFile = $this->config['log_path'] . '/webhook_' . date('Y-m-d') . '.log';
@@ -46,17 +62,30 @@ class AIService
             // Create a user message with the input
             $userMessage = new \NeuronAI\Chat\Messages\UserMessage("User {$username} says: {$messageText}");
 
+            $inspector = new \Inspector\Inspector(
+                new Configuration($this->config['inspector_ingestion_key'])
+            );
+
             // Initialize the ClickhouseAgent
-            $agent = \App\Services\ClickhouseAgent::make($this->config);
+            $agent = \App\Services\ClickhouseAgent::make($this->config)
+                ->observe(
+                    new AgentMonitoring($inspector)
+                );
             // Log that we're sending the message to the agent
             $logMessage = $logPrefix . "Sending message to ClickhouseAgent";
             file_put_contents($webhookLogFile, $logMessage . PHP_EOL, FILE_APPEND);
 
             // Get response from the agent
             $response = $agent->chat($userMessage);
-
-            // Extract content from the response
             $content = $response->getContent();
+//
+//            foreach ($response as $chunk) {
+//                // Extract content from the chunk
+//                $logMessage = $logPrefix . 'Extracting content from chunk: ' . substr($chunk, 0, 50) . (strlen($chunk) > 50 ? '...' : '').'';
+//                file_put_contents($webhookLogFile, $logMessage . PHP_EOL, FILE_APPEND);
+//
+//                $content .= $chunk;
+//            }
 
             // Log successful response generation
             $logMessage = $logPrefix . "Generated response: " . substr($content, 0, 100) . (strlen($content) > 100 ? '...' : '');
@@ -69,7 +98,8 @@ class AIService
 
         } catch (ClientException $e) {
             // Fired from AI providers and embedding providers
-            $logMessage = $logPrefix . "ClientException response: " . $e->getResponse()->getBody()->getContents();
+            $responseBody = $e->getResponse()->getBody()->getContents();
+            $logMessage = $logPrefix . "ClientException response: " . $responseBody;
             file_put_contents($webhookLogFile, $logMessage . PHP_EOL, FILE_APPEND);
 
             // Get the request object
@@ -101,17 +131,44 @@ class AIService
                 }
             } catch (\Exception $jsonEx) {
                 $logMessage = $logPrefix."Failed to decode request body as JSON: ".$jsonEx->getMessage();
-                file_put_contents($logFile, $logMessage.PHP_EOL, FILE_APPEND);
+                file_put_contents($webhookLogFile, $logMessage.PHP_EOL, FILE_APPEND);
             }
 
+            // Try to extract a user-friendly error message from the response
+            $errorMessage = "API request failed";
+            $errorType = "client_error";
 
-            return null;
+            try {
+                $responseJson = json_decode($responseBody, true);
+                if (json_last_error() === JSON_ERROR_NONE) {
+                    // Extract error message from various API formats
+                    if (isset($responseJson['error']['message'])) {
+                        $errorMessage = $responseJson['error']['message'];
+                        $errorType = $responseJson['error']['type'] ?? 'api_error';
+                    } elseif (isset($responseJson['message'])) {
+                        $errorMessage = $responseJson['message'];
+                    }
+                }
+            } catch (\Exception $jsonEx) {
+                // If we can't parse the JSON, use the status code and reason
+                $errorMessage = "API error: " . $e->getResponse()->getStatusCode() . " " . $e->getResponse()->getReasonPhrase();
+            }
+
+            return [
+                'type' => 'error',
+                'content' => "The AI service is currently experiencing issues: " . $errorMessage,
+                'error_type' => $errorType
+            ];
         } catch (NeuronException $e) {
             // catch all the exception generated just from the agent
             $logMessage = $logPrefix . "NeuronException response: " . $e->getMessage();
             file_put_contents($webhookLogFile, $logMessage . PHP_EOL, FILE_APPEND);
 
-            return null;
+            return [
+                'type' => 'error',
+                'content' => "The AI service encountered an error: " . $e->getMessage(),
+                'error_type' => 'neuron_error'
+            ];
         } catch (\Exception $e) {
             // Log general exception
             $logMessage = $logPrefix . "Error generating MCP response: " . $e->getMessage();
@@ -120,7 +177,23 @@ class AIService
             $logMessage = $logPrefix . "jsonerr: " . get_class($e);
             file_put_contents($webhookLogFile, $logMessage . PHP_EOL, FILE_APPEND);
 
-            return null;
+            // Check if it's a server overload error (like the 529 error in the example)
+            $errorMessage = $e->getMessage();
+            $errorType = 'general_error';
+
+            if (strpos($errorMessage, 'overloaded') !== false || strpos($errorMessage, '529') !== false) {
+                return [
+                    'type' => 'error',
+                    'content' => "The AI service is currently overloaded. Please try again in a few minutes.",
+                    'error_type' => 'overloaded_error'
+                ];
+            }
+
+            return [
+                'type' => 'error',
+                'content' => "An error occurred while processing your request. Please try again later.",
+                'error_type' => $errorType
+            ];
         }
     }
 
@@ -134,7 +207,7 @@ class AIService
      * @return array|null The generated response or null if generation failed.
      *                   Format: ['type' => 'text|image', 'content' => string, 'image_url' => string|null]
      */
-    public function generateGrokResponse(string $messageText, string $username, string $chatContext = '', ?string $inputImageUrl = null, bool $isBase64 = false): ?array
+    public function generateMentionResponse(string $messageText, string $username, string $chatContext = '', ?string $inputImageUrl = null, bool $isBase64 = false, int $chatId = 0): ?array
     {
         $logPrefix = "[" . date('Y-m-d H:i:s') . "] [Grok Response] ";
         $webhookLogFile = $this->config['log_path'] . '/webhook_' . date('Y-m-d') . '.log';
@@ -265,11 +338,24 @@ class AIService
             $logMessage = $logPrefix . "Generating Grok text response for message from " . $username;
             file_put_contents($webhookLogFile, $logMessage . PHP_EOL, FILE_APPEND);
 
+            // Get language setting for the chat if available
+            $language = 'en'; // Default language
+            if ($this->settingsService !== null) {
+                $language = $this->settingsService->getSetting($chatId, 'language', 'en');
+            }
+
             // Add chat context to the prompt if available
             $systemPrompt = "You are a witty, sarcastic bot that responds to mentions with funny memes, jokes, or clever comebacks. " .
                 "Keep your response short (1-2 sentences max), funny, and appropriate for a group chat. Don't use quotes, answer from the perspective of the bot but act as the person. " .
-                "Response with medium length response up to 5 sentences if message is asking something specific." .
+                "Response with medium length response up to 5 sentences if message is asking something specific. " .
                 "Use emojis if you feel it's needed.";
+
+            // Add language instruction
+            if ($language === 'ru') {
+                $systemPrompt .= " Respond in Russian language only.";
+            } else {
+                $systemPrompt .= " Respond in English language only.";
+            }
 
             if (!empty($chatContext)) {
                 $systemPrompt .= "\n\n" . $chatContext;
@@ -845,7 +931,25 @@ class AIService
             $chatInfo .= "Chat Username: $chatUsername\n";
         }
 
-        $prompt = "Summarize the following conversation that happened in a Telegram group chat over the last 24 hours. Summary language must be language mostly used in messages. Keep it concise and capture the main topics.\n\n";
+        // Get language setting for the chat if available
+        $language = 'en'; // Default language
+        if ($this->settingsService !== null && $chatId !== null) {
+            $language = $this->settingsService->getSetting($chatId, 'language', 'en');
+        }
+
+        // Log the language being used
+        $logMessage = $logPrefix . "Using language setting: {$language} for {$chatIdentifier}";
+        file_put_contents($webhookLogFile, $logMessage . PHP_EOL, FILE_APPEND);
+        file_put_contents($summaryLogFile, $logMessage . PHP_EOL, FILE_APPEND);
+
+        $languageInstruction = "";
+        if ($language === 'ru') {
+            $languageInstruction = "Generate the summary in Russian language.";
+        } else {
+            $languageInstruction = "Generate the summary in English language.";
+        }
+
+        $prompt = "Summarize the following conversation that happened in a Telegram group chat over the last 24 hours. {$languageInstruction} Keep it concise and capture the main topics.\n\n";
         if (!empty($chatInfo)) {
             $prompt .= "Chat Information:\n$chatInfo\n";
         }
@@ -867,7 +971,7 @@ class AIService
                 'json' => [
                     'model' => $this->config['openrouter_summary_model'],
                     'messages' => [
-                        ['role' => 'system', 'content' => 'You are a helpful assistant that summarizes Telegram group chats. Summary language must be language mostly used in messages, preferably Russian. Keep it concise and capture the main topics. Make list of main topics with short description and links to messages
+                        ['role' => 'system', 'content' => 'You are a helpful assistant that summarizes Telegram group chats. ' . $languageInstruction . ' Keep it concise and capture the main topics. Make list of main topics with short description and links to messages
 
 If Chat Username is provided, create links to messages using the format: https://t.me/[username]/[message_id] where [username] is the Chat Username without @ and [message_id] is a message ID you can reference from the conversation.
 

@@ -38,8 +38,9 @@ COPY cron/telegram-bot-cron /etc/cron.d/telegram-bot-cron
 RUN chmod 0644 /etc/cron.d/telegram-bot-cron \
     && touch /var/log/cron.log
 
-# Create and set permissions for data directory
+# Create and set permissions for data directory and log files
 RUN mkdir -p /app/data \
+    && touch /app/data/caddy-access.log /app/data/php-access.log /app/data/php-error.log \
     && chown -R app:app /app/data /var/log/cron.log \
     && chmod -R 775 /app/data
 
@@ -48,6 +49,7 @@ RUN echo '#!/bin/sh' > /usr/local/bin/start.sh \
     && echo 'crond -b -L /var/log/cron.log' >> /usr/local/bin/start.sh \
     && echo 'mkdir -p /data/caddy/locks' >> /usr/local/bin/start.sh \
     && echo 'mkdir -p /config/caddy' >> /usr/local/bin/start.sh \
+    && echo 'touch /app/data/caddy-access.log /app/data/php-access.log /app/data/php-error.log' >> /usr/local/bin/start.sh \
     && echo 'chown -R app:app /app/data /var/log/cron.log /data/caddy /config/caddy' >> /usr/local/bin/start.sh \
     && echo 'su -s /bin/sh -c "exec /usr/local/bin/frankenphp run --config /etc/caddy/Caddyfile --adapter caddyfile" app' >> /usr/local/bin/start.sh \
     && chmod +x /usr/local/bin/start.sh

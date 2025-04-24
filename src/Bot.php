@@ -3,6 +3,7 @@
 namespace App;
 
 use App\Services\AIService;
+use App\Services\SettingsService;
 use Longman\TelegramBot\Telegram;
 use Longman\TelegramBot\Request;
 use Longman\TelegramBot\Entities\Update;
@@ -20,6 +21,7 @@ class Bot
     private string $botUsername = ''; // Will be set in constructor
 
     private AIService $aiService;
+    private SettingsService $settingsService;
 
     public function __construct(array $config)
     {
@@ -31,7 +33,8 @@ class Bot
         }
 
         $this->httpClient = new HttpClient();
-        $this->aiService = new AIService($config);
+        $this->settingsService = new SettingsService($this->logPath);
+        $this->aiService = new AIService($config, $this->settingsService);
 
         try {
             $this->telegram = new Telegram($config['telegram_bot_token'], 'newbotname2025bot'); // Replace BotUsername if needed
@@ -207,25 +210,71 @@ class Bot
     /**
      * Process a webhook update from Telegram.
      * This method is called by the webhook.php file when a new update is received.
+     * It returns immediately after validating the update and then processes it asynchronously.
      *
      * @param string $updateJson The JSON string received from Telegram
-     * @return bool Whether the update was processed successfully
+     * @return bool Whether the update was validated successfully
      */
     public function processWebhook(string $updateJson): bool
     {
         try {
-            // Process the update
+            // Validate the update
             $update = json_decode($updateJson, true);
             if (empty($update)) {
                 error_log('Empty or invalid update received');
                 return false;
             }
 
+            // Log the receipt of the update
+            $logPrefix = "[" . date('Y-m-d H:i:s') . "] [Webhook Received] ";
+            $webhookLogFile = $this->config['log_path'] . '/webhook_' . date('Y-m-d') . '.log';
+            file_put_contents($webhookLogFile, $logPrefix . "Update received and queued for processing" . PHP_EOL, FILE_APPEND);
+            register_shutdown_function([$this, 'processWebhookAsync'], $updateJson);
+            return true;
+        } catch (\Throwable $e) {
+            $logPrefix = "[" . date('Y-m-d H:i:s') . "] [Webhook Error] ";
+            $webhookLogFile = $this->config['log_path'] . '/webhook_' . date('Y-m-d') . '.log';
+            $errorLogFile = $this->config['log_path'] . '/error_' . date('Y-m-d') . '.log';
+
+            $logMessage = $logPrefix . "Error during webhook validation: " . $e->getMessage();
+            file_put_contents($webhookLogFile, $logMessage . PHP_EOL, FILE_APPEND);
+            file_put_contents($errorLogFile, $logMessage . PHP_EOL, FILE_APPEND);
+            error_log($logMessage);
+
+            return false;
+        }
+    }
+
+    /**
+     * Process a webhook update asynchronously after the response has been sent to Telegram.
+     * This method contains the actual processing logic.
+     *
+     * @param string $updateJson The JSON string received from Telegram
+     * @return void
+     */
+    public function processWebhookAsync(string $updateJson): void
+    {
+        try {
+            // Process the update
+            $update = json_decode($updateJson, true);
+            if (empty($update)) {
+                error_log('Empty or invalid update received in async processing');
+                return;
+            }
+
             // Create an Update object from the JSON data
             $update = new Update($update, $this->telegram->getBotUsername());
 
-            // Process the update similar to how we do in processUpdates()
+            // Check if this is a new message or an edited message
+            $isEditedMessage = $update->getEditedMessage() !== null;
             $message = $update->getMessage() ?? $update->getEditedMessage();
+
+            if ($isEditedMessage) {
+                $logPrefix = "[" . date('Y-m-d H:i:s') . "] [Skip edited Processing] ";
+                $webhookLogFile = $this->config['log_path'] . '/webhook_' . date('Y-m-d') . '.log';
+                file_put_contents($webhookLogFile, $logPrefix . ' ' . $message . PHP_EOL, FILE_APPEND);
+                return;
+            }
             if ($message && ($message->getChat()->isGroupChat() || $message->getChat()->isSuperGroup())) {
                 $chatId = $message->getChat()->getId();
                 $messageText = $message->getText();
@@ -236,6 +285,7 @@ class Bot
 
                 // Get photos from the message if any
                 $photos = $message->getPhoto();
+                $webhookLogFile = $this->config['log_path'] . '/webhook_' . date('Y-m-d') . '.log';
 
                 // Get caption if available (for photos)
                 $caption = $message->getCaption();
@@ -249,7 +299,6 @@ class Bot
                     // Process images if present
                     if ($photos && !empty($photos)) {
                         $logPrefix = "[" . date('Y-m-d H:i:s') . "] [Image Processing] ";
-                        $webhookLogFile = $this->config['log_path'] . '/webhook_' . date('Y-m-d') . '.log';
 
                         try {
                             // Get the largest photo (last in the array)
@@ -259,6 +308,9 @@ class Bot
                             $fileId = $largestPhoto->getFileId();
 
                             $logMessage = $logPrefix . "Processing image with file ID: " . $fileId;
+                            file_put_contents($webhookLogFile, $logMessage . PHP_EOL, FILE_APPEND);
+
+                            $logMessage = $logPrefix . "all photos: " . json_encode($message);
                             file_put_contents($webhookLogFile, $logMessage . PHP_EOL, FILE_APPEND);
 
                             // Get the file path from Telegram
@@ -320,21 +372,36 @@ class Bot
                         }
                     }
 
-                    if ($messageText !== '/summary' && !str_starts_with($messageText, '/mcp')) {
-                        // Check if the bot is mentioned in the message
-                        // Use caption as message text if there's no text but there's a caption
-                        $textToUse = $messageText ?: ($caption ?: '');
+                    // Only process mentions for new messages, not edited ones
+                    if (!$isEditedMessage && $messageText !== '/summary' && !str_starts_with($messageText, '/mcp') && !str_starts_with($messageText, '/settings')) {
+                        // Check if bot mentions are enabled for this chat
+                        $mentionsEnabled = $this->settingsService->getSetting($chatId, 'bot_mentions_enabled', true);
+                        if (!$mentionsEnabled) {
+                            $logPrefix = "[" . date('Y-m-d H:i:s') . "] [Bot Mention] ";
+                            $logMessage = $logPrefix . "Bot mentions are disabled for chat {$chatId}, skipping mention check";
+                            file_put_contents($webhookLogFile, $logMessage . PHP_EOL, FILE_APPEND);
+                        } else {
+                            // Check if the bot is mentioned in the message
+                            // Use caption as message text if there's no text but there's a caption
+                            $textToUse = $messageText ?: ($caption ?: '');
 
-                        // If we have an image description, pass it to handleBotMention
-                        $imageDescriptionToUse = isset($formattedDescription) ? $formattedDescription : null;
+                            // If we have an image description, pass it to handleBotMention
+                            $imageDescriptionToUse = isset($formattedDescription) ? $formattedDescription : null;
 
-                        $this->handleBotMention($chatId, $textToUse, $username, $messageId, $photos ? $photos : null, $imageDescriptionToUse);
+                            $this->handleBotMention($chatId, $textToUse, $username, $messageId, $photos ? $photos : null, $imageDescriptionToUse);
+                        }
+                    } else if ($isEditedMessage) {
+                        // Log that we're skipping mention processing for edited message
+                        $logPrefix = "[" . date('Y-m-d H:i:s') . "] [Edited Message] ";
+                        $webhookLogFile = $this->config['log_path'] . '/webhook_' . date('Y-m-d') . '.log';
+                        $logMessage = $logPrefix . "Skipping mention processing for edited message in chat {$chatId} by {$username}";
+                        file_put_contents($webhookLogFile, $logMessage . PHP_EOL, FILE_APPEND);
                     }
                 }
             }
 
-            // Command handling
-            if ($message) {
+            // Command handling - only for new messages, not edited ones
+            if ($message && !$isEditedMessage) {
                 $logPrefix = "[" . date('Y-m-d H:i:s') . "] [Webhook] ";
                 $webhookLogFile = $this->config['log_path'] . '/webhook_' . date('Y-m-d') . '.log';
 
@@ -362,6 +429,25 @@ class Bot
 
                     $this->handleMCPCommand($chatId, $query, $fromUser, $messageId);
                 }
+
+                // Handle /settings command
+                if (str_starts_with($messageText, '/settings')) {
+                    // Extract the parameters part after the command
+                    $params = trim(substr($messageText, 9));
+
+                    $logMessage = $logPrefix . "Received /settings command in chat {$chatId} ({$chatTitle}) from user {$fromUser} with params: " . substr($params, 0, 50) . (strlen($params) > 50 ? '...' : '');
+                    file_put_contents($webhookLogFile, $logMessage . PHP_EOL, FILE_APPEND);
+
+                    $this->handleSettingsCommand($chatId, $params, $fromUser, $messageId, $message);
+                }
+            } else if ($message && $isEditedMessage) {
+                // Log that we're skipping command processing for edited message
+                $logPrefix = "[" . date('Y-m-d H:i:s') . "] [Edited Message] ";
+                $webhookLogFile = $this->config['log_path'] . '/webhook_' . date('Y-m-d') . '.log';
+                $chatId = $message->getChat()->getId();
+                $fromUser = $message->getFrom()->getUsername() ?? $message->getFrom()->getFirstName() ?? "Unknown";
+                $logMessage = $logPrefix . "Skipping command processing for edited message in chat {$chatId} by {$fromUser}";
+                file_put_contents($webhookLogFile, $logMessage . PHP_EOL, FILE_APPEND);
             }
 
             // Log all messages for debugging
@@ -378,8 +464,6 @@ class Bot
                 file_put_contents($webhookLogFile, $logMessage . PHP_EOL, FILE_APPEND);
             }
 
-            return true;
-
         } catch (TelegramException $e) {
             $logPrefix = "[" . date('Y-m-d H:i:s') . "] [Webhook Error] ";
             $webhookLogFile = $this->config['log_path'] . '/webhook_' . date('Y-m-d') . '.log';
@@ -389,8 +473,6 @@ class Bot
             file_put_contents($webhookLogFile, $logMessage . PHP_EOL, FILE_APPEND);
             file_put_contents($errorLogFile, $logMessage . PHP_EOL, FILE_APPEND);
             error_log($logMessage);
-
-            return false;
         } catch (\Throwable $e) {
             $logPrefix = "[" . date('Y-m-d H:i:s') . "] [Webhook Error] ";
             $webhookLogFile = $this->config['log_path'] . '/webhook_' . date('Y-m-d') . '.log';
@@ -400,8 +482,6 @@ class Bot
             file_put_contents($webhookLogFile, $logMessage . PHP_EOL, FILE_APPEND);
             file_put_contents($errorLogFile, $logMessage . PHP_EOL, FILE_APPEND);
             error_log($logMessage);
-
-            return false;
         }
     }
 
@@ -453,6 +533,21 @@ class Bot
         $logMessage = $logPrefix . "Handling /summary command for chat {$chatId}";
         file_put_contents($webhookLogFile, $logMessage . PHP_EOL, FILE_APPEND);
         echo "Handling /summary command for chat {$chatId}\n";
+
+        // Check if summaries are enabled for this chat
+        $summaryEnabled = $this->settingsService->getSetting($chatId, 'summary_enabled', true);
+        if (!$summaryEnabled) {
+            $logMessage = $logPrefix . "Summaries are disabled for chat {$chatId}, skipping";
+            file_put_contents($webhookLogFile, $logMessage . PHP_EOL, FILE_APPEND);
+
+            Request::sendMessage([
+                'chat_id' => $chatId,
+                'text' => '❌ Summaries are currently disabled for this chat. An administrator can enable them using `/settings summary on`.',
+                'parse_mode' => 'Markdown'
+            ]);
+
+            return;
+        }
 
         $messages = $this->getRecentMessages($chatId, 24);
         $messageCount = count($messages);
@@ -683,11 +778,11 @@ class Bot
      * @return array|null The generated response or null if generation failed.
      *                   Format: ['type' => 'text|image', 'content' => string, 'image_url' => string|null]
      */
-    private function generateGrokResponse(string $messageText, string $username, string $chatContext = '', ?string $inputImageUrl = null): ?array
+    private function generateMentionResponse(string $messageText, string $username, string $chatContext = '', ?string $inputImageUrl = null, int $chatId = 0): ?array
     {
         // If inputImageUrl is provided, it's a base64-encoded image
         $isBase64 = $inputImageUrl !== null;
-        return $this->aiService->generateGrokResponse($messageText, $username, $chatContext, $inputImageUrl, $isBase64);
+        return $this->aiService->generateMentionResponse($messageText, $username, $chatContext, $inputImageUrl, $isBase64, $chatId);
     }
 
     /**
@@ -697,9 +792,9 @@ class Bot
      * @param string $username The username of the message sender
      * @param string $chatContext Optional context from recent chat messages
      * @param array|null $tools Optional array of tool definitions for MCP
-     * @return array|null The generated response or null if generation failed
+     * @return array The generated response or error information
      */
-    private function generateMCPResponse(string $messageText, string $username, string $chatContext = ''): ?array
+    private function generateMCPResponse(string $messageText, string $username, string $chatContext = ''): array
     {
         return $this->aiService->generateMCPResponse($messageText, $username, $chatContext);
     }
@@ -766,7 +861,33 @@ class Bot
             // Generate response using MCP
             $response = $this->generateMCPResponse($messageText, $username, $chatContext);
 
-            if ($response) {
+            // Check if this is an error response
+            if (isset($response['type']) && $response['type'] === 'error') {
+                $logMessage = $logPrefix . "Received error response: " . ($response['error_type'] ?? 'unknown') . " - " . ($response['content'] ?? 'No error message');
+                file_put_contents($webhookLogFile, $logMessage . PHP_EOL, FILE_APPEND);
+                error_log($logMessage);
+
+                // Send the error message to the user
+                $errorMessage = $response['content'] ?? 'Sorry, I was unable to process your request at this time.';
+
+                $sendResult = Request::sendMessage([
+                    'chat_id' => $chatId,
+                    'text' => $errorMessage,
+                    'reply_to_message_id' => $messageId,
+                ]);
+
+                if ($sendResult->isOk()) {
+                    $logMessage = $logPrefix . "Successfully sent error response to chat {$chatId}";
+                    file_put_contents($webhookLogFile, $logMessage . PHP_EOL, FILE_APPEND);
+                } else {
+                    $logMessage = $logPrefix . "Failed to send error response to chat {$chatId}: " . $sendResult->getDescription();
+                    file_put_contents($webhookLogFile, $logMessage . PHP_EOL, FILE_APPEND);
+                    error_log($logMessage);
+                }
+
+                return false;
+            } else {
+                // Process normal response
                 // Check if there are tool calls that need to be processed
                 if (!empty($response['tool_calls'])) {
                     $toolCallsInfo = "Tool calls detected:\n";
@@ -789,6 +910,7 @@ class Bot
                     'chat_id' => $chatId,
                     'text' => $responseText,
                     'reply_to_message_id' => $messageId,
+                    'parse_mode' => 'MarkdownV2'
                 ]);
 
                 if ($sendResult->isOk()) {
@@ -799,17 +921,22 @@ class Bot
                     $logMessage = $logPrefix . "Failed to send MCP response to chat {$chatId}: " . $sendResult->getDescription();
                     file_put_contents($webhookLogFile, $logMessage . PHP_EOL, FILE_APPEND);
                     error_log($logMessage);
-                }
-            } else {
-                $logMessage = $logPrefix . "Failed to generate MCP response for chat {$chatId}";
-                file_put_contents($webhookLogFile, $logMessage . PHP_EOL, FILE_APPEND);
-                error_log($logMessage);
 
-                Request::sendMessage([
-                    'chat_id' => $chatId,
-                    'text' => 'Sorry, I was unable to process your request at this time.',
-                    'reply_to_message_id' => $messageId,
-                ]);
+                    $sendResult = Request::sendMessage([
+                        'chat_id' => $chatId,
+                        'text' => strip_tags($responseText),
+                        'reply_to_message_id' => $messageId,
+                    ]);
+                    if ($sendResult->isOk()) {
+                        $logMessage = $logPrefix . "Fallback text response sent to chat {$chatId}";
+                        file_put_contents($webhookLogFile, $logMessage . PHP_EOL, FILE_APPEND);
+                    }
+                    else {
+                        $logMessage = $logPrefix . "Fallback text response also failed to send to chat {$chatId}: " . $sendResult->getDescription();
+                        file_put_contents($webhookLogFile, $logMessage . PHP_EOL, FILE_APPEND);
+                        error_log($logMessage);
+                    }
+                }
             }
 
             return false;
@@ -832,6 +959,14 @@ class Bot
     {
         $logPrefix = "[" . date('Y-m-d H:i:s') . "] [Bot Mention] ";
         $webhookLogFile = $this->config['log_path'] . '/webhook_' . date('Y-m-d') . '.log';
+
+        // Check if bot mentions are enabled for this chat
+        $mentionsEnabled = $this->settingsService->getSetting($chatId, 'bot_mentions_enabled', true);
+        if (!$mentionsEnabled) {
+            $logMessage = $logPrefix . "Bot mentions are disabled for chat {$chatId}, ignoring mention";
+            file_put_contents($webhookLogFile, $logMessage . PHP_EOL, FILE_APPEND);
+            return false;
+        }
 
         // Log the message or caption being processed
         $messageSource = empty($messageText) ? "with empty text" : "with text";
@@ -870,7 +1005,7 @@ class Bot
         }
 
         // Use Grok for responses with added context
-        $response = $this->generateGrokResponse($messageText, $username, $chatContext, $inputImageUrl);
+        $response = $this->generateMentionResponse($messageText, $username, $chatContext, $inputImageUrl, $chatId);
 
         // Fallback to DeepSeek if Grok fails
 //        if (!$response) {
@@ -931,5 +1066,312 @@ class Bot
         }
 
         return false;
+    }
+
+    /**
+     * Handle the /settings command
+     *
+     * @param int $chatId The chat ID
+     * @param string $params Command parameters
+     * @param string $fromUser Username of the user who sent the command
+     * @param int $messageId Message ID of the command
+     * @param \Longman\TelegramBot\Entities\Message $message The message object
+     * @return void
+     */
+    private function handleSettingsCommand(int $chatId, string $params, string $fromUser, int $messageId, $message): void
+    {
+        $logPrefix = "[" . date('Y-m-d H:i:s') . "] [Settings Command] ";
+        $webhookLogFile = $this->config['log_path'] . '/webhook_' . date('Y-m-d') . '.log';
+
+        // Check if user is admin
+        $isAdmin = $this->isUserAdmin($chatId, $message->getFrom()->getId());
+
+        if (!$isAdmin) {
+            $logMessage = $logPrefix . "User {$fromUser} is not an admin in chat {$chatId}, denying access to settings";
+            file_put_contents($webhookLogFile, $logMessage . PHP_EOL, FILE_APPEND);
+
+            Request::sendMessage([
+                'chat_id' => $chatId,
+                'text' => '⚠️ Only group administrators can change settings.',
+                'reply_to_message_id' => $messageId
+            ]);
+
+            return;
+        }
+
+        // Parse parameters
+        $parts = explode(' ', $params);
+        $action = $parts[0] ?? '';
+
+        // If no parameters, show current settings
+        if (empty($params)) {
+            $this->showSettings($chatId, $messageId);
+            return;
+        }
+
+        // Handle different actions
+        switch ($action) {
+            case 'language':
+                $language = $parts[1] ?? '';
+                $this->setLanguage($chatId, $language, $messageId);
+                break;
+
+            case 'summary':
+                $enabled = $parts[1] ?? '';
+                $this->setSummaryEnabled($chatId, $enabled, $messageId);
+                break;
+
+            case 'mentions':
+                $enabled = $parts[1] ?? '';
+                $this->setBotMentionsEnabled($chatId, $enabled, $messageId);
+                break;
+
+            case 'help':
+            default:
+                $this->showSettingsHelp($chatId, $messageId);
+                break;
+        }
+    }
+
+    /**
+     * Check if a user is an admin in a chat
+     *
+     * @param int $chatId The chat ID
+     * @param int $userId The user ID
+     * @return bool Whether the user is an admin
+     */
+    private function isUserAdmin(int $chatId, int $userId): bool
+    {
+        try {
+            $chatMember = Request::getChatMember([
+                'chat_id' => $chatId,
+                'user_id' => $userId,
+            ]);
+
+            if ($chatMember->isOk()) {
+                $status = $chatMember->getResult()->getStatus();
+                return in_array($status, ['creator', 'administrator']);
+            }
+        } catch (\Exception $e) {
+            // Log error
+            $logPrefix = "[" . date('Y-m-d H:i:s') . "] [Admin Check] ";
+            $webhookLogFile = $this->config['log_path'] . '/webhook_' . date('Y-m-d') . '.log';
+            $logMessage = $logPrefix . "Error checking admin status: " . $e->getMessage();
+            file_put_contents($webhookLogFile, $logMessage . PHP_EOL, FILE_APPEND);
+        }
+
+        return false;
+    }
+
+    /**
+     * Show current settings for a chat
+     *
+     * @param int $chatId The chat ID
+     * @param int $messageId Message ID to reply to
+     * @return void
+     */
+    private function showSettings(int $chatId, int $messageId): void
+    {
+        $settings = $this->settingsService->getSettings($chatId);
+        $languages = $this->settingsService->getAvailableLanguages();
+
+        $languageName = $languages[$settings['language']] ?? $settings['language'];
+        $summaryEnabled = $settings['summary_enabled'] ? '✅ Enabled' : '❌ Disabled';
+        $mentionsEnabled = $settings['bot_mentions_enabled'] ? '✅ Enabled' : '❌ Disabled';
+
+        $message = "📊 *Current Settings*\n\n" .
+            "🌐 *Language*: {$languageName}\n" .
+            "📝 *Summary*: {$summaryEnabled}\n" .
+            "🤖 *Bot Mentions*: {$mentionsEnabled}\n\n" .
+            "Use `/settings help` to see available commands.";
+
+        Request::sendMessage([
+            'chat_id' => $chatId,
+            'text' => $message,
+            'parse_mode' => 'Markdown',
+            'reply_to_message_id' => $messageId
+        ]);
+    }
+
+    /**
+     * Show settings help
+     *
+     * @param int $chatId The chat ID
+     * @param int $messageId Message ID to reply to
+     * @return void
+     */
+    private function showSettingsHelp(int $chatId, int $messageId): void
+    {
+        $languages = $this->settingsService->getAvailableLanguages();
+        $languageOptions = [];
+
+        foreach ($languages as $code => $name) {
+            $languageOptions[] = "`{$code}` ({$name})";
+        }
+
+        $languageList = implode(', ', $languageOptions);
+
+        $message = "⚙️ *Settings Commands*\n\n" .
+            "• `/settings` - Show current settings\n" .
+            "• `/settings language [code]` - Set language\n" .
+            "  Available languages: {$languageList}\n" .
+            "• `/settings summary [on/off]` - Enable/disable summaries\n" .
+            "• `/settings mentions [on/off]` - Enable/disable bot mentions\n" .
+            "• `/settings help` - Show this help message\n\n" .
+            "Only group administrators can change settings.";
+
+        Request::sendMessage([
+            'chat_id' => $chatId,
+            'text' => $message,
+            'parse_mode' => 'Markdown',
+            'reply_to_message_id' => $messageId
+        ]);
+    }
+
+    /**
+     * Set language for a chat
+     *
+     * @param int $chatId The chat ID
+     * @param string $language The language code
+     * @param int $messageId Message ID to reply to
+     * @return void
+     */
+    private function setLanguage(int $chatId, string $language, int $messageId): void
+    {
+        $languages = $this->settingsService->getAvailableLanguages();
+
+        if (empty($language) || !isset($languages[$language])) {
+            $languageOptions = [];
+
+            foreach ($languages as $code => $name) {
+                $languageOptions[] = "`{$code}` ({$name})";
+            }
+
+            $languageList = implode(', ', $languageOptions);
+
+            $message = "⚠️ Invalid language code.\n\nAvailable languages: {$languageList}";
+
+            Request::sendMessage([
+                'chat_id' => $chatId,
+                'text' => $message,
+                'parse_mode' => 'Markdown',
+                'reply_to_message_id' => $messageId
+            ]);
+
+            return;
+        }
+
+        $this->settingsService->updateSetting($chatId, 'language', $language);
+        $languageName = $languages[$language];
+
+        $message = "✅ Language set to *{$languageName}* (`{$language}`)";
+
+        Request::sendMessage([
+            'chat_id' => $chatId,
+            'text' => $message,
+            'parse_mode' => 'Markdown',
+            'reply_to_message_id' => $messageId
+        ]);
+    }
+
+    /**
+     * Enable or disable summaries for a chat
+     *
+     * @param int $chatId The chat ID
+     * @param string $enabled Whether summaries are enabled ('on', 'off', 'true', 'false')
+     * @param int $messageId Message ID to reply to
+     * @return void
+     */
+    private function setSummaryEnabled(int $chatId, string $enabled, int $messageId): void
+    {
+        $value = $this->parseBoolean($enabled);
+
+        if ($value === null) {
+            $message = "⚠️ Invalid value. Please use `on` or `off`.";
+
+            Request::sendMessage([
+                'chat_id' => $chatId,
+                'text' => $message,
+                'parse_mode' => 'Markdown',
+                'reply_to_message_id' => $messageId
+            ]);
+
+            return;
+        }
+
+        $this->settingsService->updateSetting($chatId, 'summary_enabled', $value);
+
+        $status = $value ? 'enabled' : 'disabled';
+        $emoji = $value ? '✅' : '❌';
+
+        $message = "{$emoji} Summaries are now *{$status}* for this chat.";
+
+        Request::sendMessage([
+            'chat_id' => $chatId,
+            'text' => $message,
+            'parse_mode' => 'Markdown',
+            'reply_to_message_id' => $messageId
+        ]);
+    }
+
+    /**
+     * Enable or disable bot mentions for a chat
+     *
+     * @param int $chatId The chat ID
+     * @param string $enabled Whether bot mentions are enabled ('on', 'off', 'true', 'false')
+     * @param int $messageId Message ID to reply to
+     * @return void
+     */
+    private function setBotMentionsEnabled(int $chatId, string $enabled, int $messageId): void
+    {
+        $value = $this->parseBoolean($enabled);
+
+        if ($value === null) {
+            $message = "⚠️ Invalid value. Please use `on` or `off`.";
+
+            Request::sendMessage([
+                'chat_id' => $chatId,
+                'text' => $message,
+                'parse_mode' => 'Markdown',
+                'reply_to_message_id' => $messageId
+            ]);
+
+            return;
+        }
+
+        $this->settingsService->updateSetting($chatId, 'bot_mentions_enabled', $value);
+
+        $status = $value ? 'enabled' : 'disabled';
+        $emoji = $value ? '✅' : '❌';
+
+        $message = "{$emoji} Bot mentions are now *{$status}* for this chat.";
+
+        Request::sendMessage([
+            'chat_id' => $chatId,
+            'text' => $message,
+            'parse_mode' => 'Markdown',
+            'reply_to_message_id' => $messageId
+        ]);
+    }
+
+    /**
+     * Parse a boolean value from a string
+     *
+     * @param string $value The string value
+     * @return bool|null The boolean value, or null if invalid
+     */
+    private function parseBoolean(string $value): ?bool
+    {
+        $value = strtolower(trim($value));
+
+        if (in_array($value, ['on', 'true', 'yes', '1', 'enable', 'enabled'])) {
+            return true;
+        }
+
+        if (in_array($value, ['off', 'false', 'no', '0', 'disable', 'disabled'])) {
+            return false;
+        }
+
+        return null;
     }
 }
