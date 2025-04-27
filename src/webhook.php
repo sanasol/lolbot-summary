@@ -13,9 +13,6 @@ require_once __DIR__ . '/../vendor/autoload.php';
 use App\Bot;
 use Dotenv\Dotenv;
 
-// Check if running under FrankenPHP
-$isFrankenPHP = function_exists('frankenphp_handle_request');
-
 // Load environment variables from .env file if it exists
 if (file_exists(__DIR__ . '/../.env')) {
     $dotenv = Dotenv::createImmutable(__DIR__ . '/../');
@@ -66,27 +63,12 @@ try {
     if ($result) {
         // Return a 200 OK response to Telegram immediately
         http_response_code(200);
-
-        // If running under FrankenPHP, use its features to optimize the response
-        if ($isFrankenPHP && function_exists('frankenphp_finish_request')) {
-            // Send the response immediately and continue processing in the background
-            echo 'OK';
-            frankenphp_finish_request();
-
-            // Log that we're using FrankenPHP's finish_request
-            file_put_contents(
-                $config['log_path'] . '/webhook_' . date('Y-m-d') . '.log',
-                '[' . date('Y-m-d H:i:s') . '] [FrankenPHP] Using frankenphp_finish_request for async processing' . PHP_EOL,
-                FILE_APPEND
-            );
-        } else {
-            exit('OK');
-        }
-    } else {
-        // If there was a validation error, return a 400 Bad Request
-        http_response_code(400);
-        exit('Invalid webhook data');
+        exit('OK');
     }
+
+// If there was a validation error, return a 400 Bad Request
+    http_response_code(400);
+    exit('Invalid webhook data');
 
 } catch (\Throwable $e) {
     // Log the error
