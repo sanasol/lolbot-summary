@@ -91,11 +91,16 @@ class Bot
         $this->messageStorage = new MessageStorage($this->logPath);
         $this->markdownService = new MarkdownService();
         
-        // AI service depends on settings
-        $this->aiService = new AIService($this->config, $this->settingsService);
+        // AI service depends on settings and logger
+        $this->aiService = new AIService($this->config, $this->settingsService, $this->logger);
         
         // Services that depend on other services
-        $this->sender = new TelegramSender($this->markdownService, $this->logger, $this->config);
+        $this->sender = new TelegramSender(
+            $this->markdownService, 
+            $this->logger, 
+            $this->config,
+            $this->messageStorage
+        );
         $this->mentionHandler = new BotMentionHandler(
             $this->aiService,
             $this->settingsService,

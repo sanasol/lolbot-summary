@@ -13,12 +13,18 @@ class TelegramSender
     private MarkdownService $markdownService;
     private LoggerService $logger;
     private array $config;
+    private ?MessageStorage $messageStorage;
 
-    public function __construct(MarkdownService $markdownService, LoggerService $logger, array $config)
-    {
+    public function __construct(
+        MarkdownService $markdownService,
+        LoggerService $logger,
+        array $config,
+        ?MessageStorage $messageStorage = null
+    ) {
         $this->markdownService = $markdownService;
         $this->logger = $logger;
         $this->config = $config;
+        $this->messageStorage = $messageStorage;
     }
 
     /**
@@ -35,6 +41,11 @@ class TelegramSender
         // Convert HTML to Telegram's MarkdownV2 format
         $formattedText = $this->markdownService->htmlToTelegramMarkdown($html);
 
+        // Wrap the formatted text in spoiler tags to create an expandable quote
+        $formattedText = "<blockquote expandable>" . $formattedText . "</blockquote>
+
+#dataRequest";
+
         // Log the formatted text before sending
         $this->logger->log(
             "Converted HTML to Markdown: " . $formattedText . PHP_EOL . "Original HTML: " . $html,
@@ -45,7 +56,7 @@ class TelegramSender
         $params = [
             'chat_id' => $chatId,
             'text' => $formattedText,
-            'parse_mode' => 'MarkdownV2'
+            'parse_mode' => 'HTML'
         ];
 
         // Add reply_to_message_id if provided
@@ -57,7 +68,31 @@ class TelegramSender
         $params = array_merge($params, $additionalParams);
 
         // Send the message
-        return Request::sendMessage($params);
+        $result = Request::sendMessage($params);
+
+        // Store the bot's message if message storage is available and the message was sent successfully
+        if ($this->messageStorage !== null && $result->isOk()) {
+            $resultData = $result->getResult();
+            if ($resultData) {
+                $timestamp = $resultData->getDate();
+                $messageId = $resultData->getMessageId();
+                $botUsername = $resultData->getFrom()->getUsername() ?? 'Bot';
+
+                // Store the message with [BOT] prefix to distinguish it
+                // For HTML messages, store a simplified version without markdown formatting
+                $this->messageStorage->storeMessage(
+                    $chatId,
+                    $timestamp,
+                    "[BOT] " . $botUsername,
+                    strip_tags($html), // Remove HTML tags for storage
+                    $messageId
+                );
+
+                $this->logger->log("Stored bot HTML message in chat {$chatId}", "Bot Message Storage");
+            }
+        }
+
+        return $result;
     }
 
     /**
@@ -84,7 +119,31 @@ class TelegramSender
             $params['reply_to_message_id'] = $replyToMessageId;
         }
 
-        return Request::sendMessage($params);
+        // Send the message
+        $result = Request::sendMessage($params);
+
+        // Store the bot's message if message storage is available and the message was sent successfully
+        if ($this->messageStorage !== null && $result->isOk()) {
+            $resultData = $result->getResult();
+            if ($resultData) {
+                $timestamp = $resultData->getDate();
+                $messageId = $resultData->getMessageId();
+                $botUsername = $resultData->getFrom()->getUsername() ?? 'Bot';
+
+                // Store the message with [BOT] prefix to distinguish it
+                $this->messageStorage->storeMessage(
+                    $chatId,
+                    $timestamp,
+                    "[BOT] " . $botUsername,
+                    $text,
+                    $messageId
+                );
+
+                $this->logger->log("Stored bot message in chat {$chatId}", "Bot Message Storage");
+            }
+        }
+
+        return $result;
     }
 
     /**
@@ -111,7 +170,36 @@ class TelegramSender
             $params['reply_to_message_id'] = $replyToMessageId;
         }
 
-        return Request::sendPhoto($params);
+        // Send the photo
+        $result = Request::sendPhoto($params);
+
+        // Store the bot's message if message storage is available and the message was sent successfully
+        if ($this->messageStorage !== null && $result->isOk()) {
+            $resultData = $result->getResult();
+            if ($resultData) {
+                $timestamp = $resultData->getDate();
+                $messageId = $resultData->getMessageId();
+                $botUsername = $resultData->getFrom()->getUsername() ?? 'Bot';
+
+                // Store the message with [BOT] prefix and [PHOTO] indicator
+                $messageText = "[PHOTO]";
+                if ($caption) {
+                    $messageText .= " " . $caption;
+                }
+
+                $this->messageStorage->storeMessage(
+                    $chatId,
+                    $timestamp,
+                    "[BOT] " . $botUsername,
+                    $messageText,
+                    $messageId
+                );
+
+                $this->logger->log("Stored bot photo message in chat {$chatId}", "Bot Message Storage");
+            }
+        }
+
+        return $result;
     }
 
     /**

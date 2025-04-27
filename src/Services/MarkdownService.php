@@ -19,7 +19,7 @@ class MarkdownService
     {
         // Use the HTML converter to get MarkdownV2 format
         $options = [
-            'format_to' => 'MarkdownV2',
+            'format_to' => 'HTML',
         ];
         $converter = new HtmlConverter($options);
 

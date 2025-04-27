@@ -4,6 +4,7 @@ namespace App\Services;
 
 use App\Services\AI\AIService as AIServiceImplementation;
 use App\Services\AI\AIServiceInterface;
+use App\Services\LoggerService;
 
 /**
  * Main AI service class that delegates to the implementation
@@ -17,10 +18,11 @@ class AIService implements AIServiceInterface
      *
      * @param array $config The configuration array
      * @param SettingsService|null $settingsService The settings service
+     * @param LoggerService|null $loggerService The logger service
      */
-    public function __construct(array $config, ?SettingsService $settingsService = null)
+    public function __construct(array $config, ?SettingsService $settingsService = null, ?LoggerService $loggerService = null)
     {
-        $this->implementation = new AIServiceImplementation($config, $settingsService);
+        $this->implementation = new AIServiceImplementation($config, $loggerService, $settingsService);
     }
 
     /**
@@ -61,9 +63,9 @@ class AIService implements AIServiceInterface
      * @return array|null The generated response or null if generation failed.
      *                   Format: ['type' => 'text|image', 'content' => string, 'image_url' => string|null]
      */
-    public function generateMentionResponse(string $messageText, string $username, string $chatContext = '', ?string $inputImageUrl = null, bool $isBase64 = false, int $chatId = 0): ?array
+    public function generateMentionResponse(string $messageText, string $username, string $chatContext = '', ?string $inputImageUrl = null, bool $isBase64 = false, int $chatId = 0, bool $isReplyToBot = false): ?array
     {
-        return $this->implementation->generateMentionResponse($messageText, $username, $chatContext, $inputImageUrl, $isBase64, $chatId);
+        return $this->implementation->generateMentionResponse($messageText, $username, $chatContext, $inputImageUrl, $isBase64, $chatId, $isReplyToBot);
     }
 
     /**

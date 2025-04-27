@@ -35,9 +35,10 @@ class BotMentionHandler
      * @param int $replyToMessageId The message ID to reply to
      * @param array|null $photos Optional photos in the message
      * @param string|null $imageDescription Optional image description
+     * @param bool $isReplyToBot Whether this message is a reply to a bot message
      * @return bool Whether the mention was handled successfully
      */
-    public function handleBotMention(int $chatId, string $messageText, string $username, int $replyToMessageId, $photos = null, ?string $imageDescription = null): bool
+    public function handleBotMention(int $chatId, string $messageText, string $username, int $replyToMessageId, $photos = null, ?string $imageDescription = null, bool $isReplyToBot = false): bool
     {
         // Check if bot mentions are enabled for this chat
         $mentionsEnabled = $this->settingsService->getSetting($chatId, 'bot_mentions_enabled', true);
@@ -52,7 +53,12 @@ class BotMentionHandler
             $messageSource = empty($messageText) ? "with photo only" : "with photo and caption";
         }
 
-        $this->logger->logBotMention("Bot mentioned in chat {$chatId} by {$username} {$messageSource}: " . substr($messageText, 0, 50) . (strlen($messageText) > 50 ? '...' : ''));
+        // Log whether this is a direct mention or a reply to bot
+        if ($isReplyToBot) {
+            $this->logger->logBotMention("Reply to bot message in chat {$chatId} by {$username} {$messageSource}: " . substr($messageText, 0, 50) . (strlen($messageText) > 50 ? '...' : ''));
+        } else {
+            $this->logger->logBotMention("Bot mentioned in chat {$chatId} by {$username} {$messageSource}: " . substr($messageText, 0, 50) . (strlen($messageText) > 50 ? '...' : ''));
+        }
 
         // If we already have an image description from the caller, use it
         $inputImageUrl = null;
@@ -67,8 +73,10 @@ class BotMentionHandler
             }
         }
 
-        // Get recent messages from the chat for context (last 10 messages or from the last 30 minutes)
-        $recentMessages = $this->messageStorage->getRecentChatContext($chatId);
+        // Get more recent messages from the chat for context (increased from default)
+        // Get more messages if this is a reply to bot to provide better context
+        $contextMessageCount = $isReplyToBot ? 15 : 10; // Get more context for replies to bot
+        $recentMessages = $this->messageStorage->getRecentChatContext($chatId, $contextMessageCount);
         $chatContext = '';
 
         if (!empty($recentMessages)) {
@@ -77,7 +85,7 @@ class BotMentionHandler
         }
 
         // Use AI service for responses with added context
-        $response = $this->generateMentionResponse($messageText, $username, $chatContext, $inputImageUrl, $chatId);
+        $response = $this->generateMentionResponse($messageText, $username, $chatContext, $inputImageUrl, $chatId, $isReplyToBot);
 
         if ($response) {
             // Check if this is a text or image response
@@ -117,6 +125,37 @@ class BotMentionHandler
 
             if ($sendResult->isOk()) {
                 $this->logger->logBotMention("Successfully sent {$responseType} response to chat {$chatId}");
+
+                // Store the bot's message in message storage
+                $resultData = $sendResult->getResult();
+                if ($resultData) {
+                    $timestamp = $resultData->getDate();
+                    $messageId = $resultData->getMessageId();
+                    $botUsername = $resultData->getFrom()->getUsername() ?? 'Bot';
+
+                    // Determine the message text to store based on response type
+                    $messageText = '';
+                    if ($responseType === 'text' || $responseType === 'fallback') {
+                        $messageText = $response['content'] ?? 'Sorry, I couldn\'t generate an image for that request.';
+                    } else if ($responseType === 'image') {
+                        $messageText = "[PHOTO]";
+                        if (isset($response['content']) && $response['content']) {
+                            $messageText .= " " . $response['content'];
+                        }
+                    }
+
+                    // Store the message
+                    $this->messageStorage->storeMessage(
+                        $chatId,
+                        $timestamp,
+                        "[BOT] " . $botUsername,
+                        $messageText,
+                        $messageId
+                    );
+
+                    $this->logger->logBotMention("Stored bot response in message storage");
+                }
+
                 return true;
             }
 
@@ -137,10 +176,10 @@ class BotMentionHandler
      * @param int $chatId The chat ID
      * @return array|null The generated response or null if generation failed
      */
-    private function generateMentionResponse(string $messageText, string $username, string $chatContext = '', ?string $inputImageUrl = null, int $chatId = 0): ?array
+    private function generateMentionResponse(string $messageText, string $username, string $chatContext = '', ?string $inputImageUrl = null, int $chatId = 0, bool $isReplyToBot = false): ?array
     {
         // If inputImageUrl is provided, it's a base64-encoded image
         $isBase64 = $inputImageUrl !== null;
-        return $this->aiService->generateMentionResponse($messageText, $username, $chatContext, $inputImageUrl, $isBase64, $chatId);
+        return $this->aiService->generateMentionResponse($messageText, $username, $chatContext, $inputImageUrl, $isBase64, $chatId, $isReplyToBot);
     }
 }

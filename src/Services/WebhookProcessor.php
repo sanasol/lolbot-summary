@@ -100,9 +100,44 @@ class WebhookProcessor
                     }
 
                     // Only process mentions for new messages, not edited ones
-                    if (!$isEditedMessage && $messageText !== '/summary' && !str_starts_with($messageText, '/mcp') && !str_starts_with($messageText, '/settings')) {
-                        // Check if bot mentions are enabled for this chat
-                        $this->processBotMention($chatId, $messageText ?: ($caption ?: ''), $username, $messageId, $photos, $formattedDescription ?? null);
+                    // Only process mentions for non-command messages
+                    if (!$isEditedMessage && 
+                        $messageText !== '/summary' && 
+                        !str_starts_with($messageText, '/mcp') && 
+                        !str_starts_with($messageText, '/settings')) {
+                        // Check if the message is a reply to a bot message
+                        $isReplyToBot = false;
+                        $replyToMessage = $message->getReplyToMessage();
+                        
+                        if ($replyToMessage) {
+                            $replyFrom = $replyToMessage->getFrom();
+                            if ($replyFrom && $replyFrom->getUsername() === $this->botUsername) {
+                                $isReplyToBot = true;
+                                $this->logger->log(
+                                    "Detected reply to bot message in chat {$chatId} by {$username}",
+                                    'Bot Reply'
+                                );
+                            }
+                        }
+                        
+                        // Check if message contains bot mention or is a reply to bot
+                        $hasBotMention = strpos(strtolower($messageText ?: ($caption ?: '')), '@' . strtolower($this->botUsername)) !== false;
+                        
+                        // Also check for the bot's username without @ symbol (for more natural mentions)
+                        $hasNaturalMention = !$hasBotMention && strpos(strtolower($messageText ?: ($caption ?: '')), strtolower($this->botUsername)) !== false;
+                        
+                        if ($hasBotMention || $isReplyToBot || $hasNaturalMention) {
+                            // Log the type of mention detected
+                            if ($hasNaturalMention && !$hasBotMention && !$isReplyToBot) {
+                                $this->logger->log(
+                                    "Detected natural mention of bot in chat {$chatId} by {$username}",
+                                    'Natural Mention'
+                                );
+                            }
+                            
+                            // Check if bot mentions are enabled for this chat
+                            $this->processBotMention($chatId, $messageText ?: ($caption ?: ''), $username, $messageId, $photos, $formattedDescription ?? null, $isReplyToBot);
+                        }
                     } else if ($isEditedMessage) {
                         // Log that we're skipping mention processing for edited message
                         $this->logger->log(
@@ -211,10 +246,11 @@ class WebhookProcessor
      * @param int $messageId The message ID
      * @param array|null $photos The photos in the message
      * @param string|null $imageDescription The image description if available
+     * @param bool $isReplyToBot Whether this message is a reply to a bot message
      */
-    private function processBotMention(int $chatId, string $textToUse, string $username, int $messageId, $photos = null, ?string $imageDescription = null): void
+    private function processBotMention(int $chatId, string $textToUse, string $username, int $messageId, $photos = null, ?string $imageDescription = null, bool $isReplyToBot = false): void
     {
-        $this->mentionHandler->handleBotMention($chatId, $textToUse, $username, $messageId, $photos, $imageDescription);
+        $this->mentionHandler->handleBotMention($chatId, $textToUse, $username, $messageId, $photos, $imageDescription, $isReplyToBot);
     }
 
     /**

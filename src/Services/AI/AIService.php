@@ -13,7 +13,7 @@ class AIService implements AIServiceInterface
     private array $config;
     private ?SettingsService $settingsService;
     private LoggerService $logger;
-    
+
     private MCPResponseGenerator $mcpGenerator;
     private MentionResponseGenerator $mentionGenerator;
     private ImageProcessor $imageProcessor;
@@ -33,16 +33,16 @@ class AIService implements AIServiceInterface
         $this->config = $config;
         $this->logger = $logger;
         $this->settingsService = $settingsService;
-        
+
         // Add settings service to config for use in generators
         if ($settingsService !== null) {
             $this->config['settingsService'] = $settingsService;
         }
-        
+
         // Initialize dependencies
         $this->promptBuilder = new PromptBuilder();
         $this->formatter = new ResponseFormatter();
-        
+
         // Initialize generators
         $this->mcpGenerator = new MCPResponseGenerator($this->config, $this->formatter, $this->logger);
         $this->mentionGenerator = new MentionResponseGenerator($this->config, $this->promptBuilder, $this->formatter, $this->logger);
@@ -89,37 +89,37 @@ class AIService implements AIServiceInterface
      * @return array|null The generated response or null if generation failed.
      *                   Format: ['type' => 'text|image', 'content' => string, 'image_url' => string|null]
      */
-    public function generateMentionResponse(string $messageText, string $username, string $chatContext = '', ?string $inputImageUrl = null, bool $isBase64 = false, int $chatId = 0): ?array
+    public function generateMentionResponse(string $messageText, string $username, string $chatContext = '', ?string $inputImageUrl = null, bool $isBase64 = false, int $chatId = 0, bool $isReplyToBot = false): ?array
     {
         // Check if this is an image generation request
-        if ($this->imageProcessor->isImageGenerationRequest($messageText, $inputImageUrl)) {
-            // Generate image
-            $imageResult = $this->imageProcessor->generateImage($messageText, $inputImageUrl);
-            
-            if ($imageResult) {
-                // Check if we got an image URL
-                if ($imageResult['url']) {
-                    return [
-                        'type' => 'image',
-                        'image_url' => $imageResult['url'],
-                        'content' => $imageResult['text_response'] ?? null,
-                        'prompt' => $imageResult['prompt'],
-                        'revised_prompt' => $imageResult['revised_prompt']
-                    ];
-                }
-                // If we only got a text response (no image), return it as a text response
-                elseif (isset($imageResult['text_response'])) {
-                    return [
-                        'type' => 'text',
-                        'content' => $imageResult['text_response'],
-                        'image_url' => null
-                    ];
-                }
-            }
-        }
-        
+//        if ($this->imageProcessor->isImageGenerationRequest($messageText, $inputImageUrl)) {
+//            // Generate image
+//            $imageResult = $this->imageProcessor->generateImage($messageText, $inputImageUrl);
+//
+//            if ($imageResult) {
+//                // Check if we got an image URL
+//                if ($imageResult['url']) {
+//                    return [
+//                        'type' => 'image',
+//                        'image_url' => $imageResult['url'],
+//                        'content' => $imageResult['text_response'] ?? null,
+//                        'prompt' => $imageResult['prompt'],
+//                        'revised_prompt' => $imageResult['revised_prompt']
+//                    ];
+//                }
+//                // If we only got a text response (no image), return it as a text response
+//                elseif (isset($imageResult['text_response'])) {
+//                    return [
+//                        'type' => 'text',
+//                        'content' => $imageResult['text_response'],
+//                        'image_url' => null
+//                    ];
+//                }
+//            }
+//        }
+
         // If not an image request or image generation failed, generate a text response
-        return $this->mentionGenerator->generate($messageText, $username, $chatContext, $inputImageUrl, $isBase64, $chatId);
+        return $this->mentionGenerator->generate($messageText, $username, $chatContext, $inputImageUrl, $isBase64, $chatId, $isReplyToBot);
     }
 
     /**

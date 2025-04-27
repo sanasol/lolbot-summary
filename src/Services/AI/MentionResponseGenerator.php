@@ -48,80 +48,84 @@ class MentionResponseGenerator
      * @return array|null The generated response or null if generation failed.
      *                   Format: ['type' => 'text|image', 'content' => string, 'image_url' => string|null]
      */
-    public function generate(string $messageText, string $username, string $chatContext = '', ?string $inputImageUrl = null, bool $isBase64 = false, int $chatId = 0): ?array
+    public function generate(string $messageText, string $username, string $chatContext = '', ?string $inputImageUrl = null, bool $isBase64 = false, int $chatId = 0, bool $isReplyToBot = false): ?array
     {
         try {
             // Log API request
             $this->logger->log("Generating Grok response for message: " . substr($messageText, 0, 50) . (strlen($messageText) > 50 ? '...' : ''), "Grok Response", "webhook");
 
-            // First, check if we should respond at all using structured output
-            $shouldRespondPrompt = $this->promptBuilder->buildShouldRespondPrompt($messageText);
+            if (!$isReplyToBot) {
+                // First, check if we should respond at all using structured output
+                $shouldRespondPrompt = $this->promptBuilder->buildShouldRespondPrompt($messageText);
 
-            $shouldRespondResponse = $this->httpClient->post($this->config['openrouter_api_url'], [
-                'headers' => [
-                    'Authorization' => 'Bearer ' . $this->config['openrouter_key'],
-                    'Content-Type'  => 'application/json',
-                ],
-                'json' => [
-                    'model' => $this->config['openrouter_chat_model'],
-                    'messages' => [
-                        ['role' => 'user', 'content' => $shouldRespondPrompt]
+                $shouldRespondResponse = $this->httpClient->post($this->config['openrouter_api_url'], [
+                    'headers' => [
+                        'Authorization' => 'Bearer ' . $this->config['openrouter_key'],
+                        'Content-Type'  => 'application/json',
                     ],
-                    'response_format' => [
-                        'type' => 'json_schema',
-                        'json_schema' => [
-                            'name' => 'response_confidence',
-                            'strict' => true,
-                            'schema' => [
-                                'type' => 'object',
-                                'properties' => [
-                                    'confidence_score' => [
-                                        'type' => 'integer',
-                                        'description' => 'Confidence score from 0-100 indicating how likely the message needs a response'
+                    'json' => [
+                        'model' => $this->config['openrouter_chat_model'],
+                        'messages' => [
+                            ['role' => 'user', 'content' => $shouldRespondPrompt]
+                        ],
+                        'response_format' => [
+                            'type' => 'json_schema',
+                            'json_schema' => [
+                                'name' => 'response_confidence',
+                                'strict' => true,
+                                'schema' => [
+                                    'type' => 'object',
+                                    'properties' => [
+                                        'confidence_score' => [
+                                            'type' => 'integer',
+                                            'description' => 'Confidence score from 0-100 indicating how likely the message needs a response'
+                                        ],
+                                        'reason' => [
+                                            'type' => 'string',
+                                            'description' => 'Brief explanation for the confidence score'
+                                        ]
                                     ],
-                                    'reason' => [
-                                        'type' => 'string',
-                                        'description' => 'Brief explanation for the confidence score'
-                                    ]
-                                ],
-                                'required' => ['confidence_score', 'reason'],
-                                'additionalProperties' => false
+                                    'required' => ['confidence_score', 'reason'],
+                                    'additionalProperties' => false
+                                ]
                             ]
-                        ]
+                        ],
+                        'max_tokens' => 100,
+                        'temperature' => 0.1,
                     ],
-                    'max_tokens' => 100,
-                    'temperature' => 0.1,
-                ],
-                'timeout' => 30,
-            ]);
+                    'timeout' => 30,
+                ]);
 
-            $content = $shouldRespondResponse->getBody()->getContents();
-            $this->logger->log("Raw shouldRespond API response: " . $content, "Grok Response", "webhook");
+                $content = $shouldRespondResponse->getBody()->getContents();
+                $this->logger->log("Raw shouldRespond API response: " . $content, "Grok Response", "webhook");
 
-            $body = json_decode($content, true);
-            $this->logger->log("Decoded shouldRespond API response: " . json_encode($body), "Grok Response", "webhook");
+                $body = json_decode($content, true);
+                $this->logger->log("Decoded shouldRespond API response: " . json_encode($body), "Grok Response", "webhook");
 
-            // Parse the structured JSON response
-            $shouldRespond = 0;
-            $reason = '';
+                // Parse the structured JSON response
+                $shouldRespond = 0;
+                $reason = '';
 
-            if (isset($body['choices'][0]['message']['content'])) {
-                try {
-                    $responseData = json_decode($body['choices'][0]['message']['content'], true);
-                    if (isset($responseData['confidence_score'])) {
-                        $shouldRespond = (int)$responseData['confidence_score'];
-                        $reason = $responseData['reason'] ?? '';
+                if (isset($body['choices'][0]['message']['content'])) {
+                    try {
+                        $responseData = json_decode($body['choices'][0]['message']['content'], true);
+                        if (isset($responseData['confidence_score'])) {
+                            $shouldRespond = (int)$responseData['confidence_score'];
+                            $reason = $responseData['reason'] ?? '';
 
-                        $this->logger->log("Parsed confidence score: " . $shouldRespond . ", Reason: " . $reason, "Grok Response", "webhook");
+                            $this->logger->log("Parsed confidence score: " . $shouldRespond . ", Reason: " . $reason, "Grok Response", "webhook");
+                        }
+                    } catch (\Exception $e) {
+                        $this->logger->logError("Error parsing structured response: " . $e->getMessage(), "Grok Response", $e);
                     }
-                } catch (\Exception $e) {
-                    $this->logger->logError("Error parsing structured response: " . $e->getMessage(), "Grok Response", $e);
                 }
-            }
 
-            if ($shouldRespond < 50) {
-                $this->logger->log("Decided not to respond to message (confidence score: " . $shouldRespond . ")", "Grok Response", "webhook");
-                return null;
+                if ($shouldRespond < 50) {
+                    $this->logger->log("Decided not to respond to message (confidence score: " . $shouldRespond . ")", "Grok Response", "webhook");
+                    return null;
+                }
+            } else {
+                $this->logger->log("This is a response to bot's message, we have to answer", "Grok Response", "webhook");
             }
 
             // If we should respond with text, generate a response
@@ -135,7 +139,7 @@ class MentionResponseGenerator
 
             // Build the system prompt
             $systemPrompt = $this->promptBuilder->buildMentionSystemPrompt($language, $chatContext);
-            
+
             // Build the user prompt
             $userPrompt = $this->promptBuilder->buildMentionUserPrompt($messageText, $username);
 
@@ -149,8 +153,6 @@ class MentionResponseGenerator
                 'temperature' => 0.5, // Higher temperature for more creative responses
             ];
 
-            $this->log(json_encode($params), $logPrefix, $webhookLogFile);
-
             $response = $this->httpClient->post($this->config['openrouter_api_url'], [
                 'headers' => [
                     'Authorization' => 'Bearer ' . $this->config['openrouter_key'],
@@ -161,7 +163,7 @@ class MentionResponseGenerator
             ]);
 
             $responseContent = $response->getBody()->getContents();
-            $this->log("Raw API response: " . $responseContent, $logPrefix, $webhookLogFile);
+            $this->logger->log("Raw API response: " . $responseContent, "Grok Response", "webhook");
 
             $body = json_decode($responseContent, true);
 

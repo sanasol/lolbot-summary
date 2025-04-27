@@ -62,7 +62,7 @@ class MCPResponseGenerator
                 ->observe(
                     new AgentMonitoring($inspector)
                 );
-                
+
             // Log that we're sending the message to the agent
             $this->logger->log("Sending message to ClickhouseAgent", "MCP Response", "webhook");
 
@@ -79,6 +79,7 @@ class MCPResponseGenerator
             return [
                 'type' => 'text',
                 'content' => !empty($content) ? ($content.' 
+
 model:'.$this->config['openrouter_tool_model']) : 'Something went wrong. Please try again later. model: '.$this->config['openrouter_tool_model']
             ];
 
@@ -95,7 +96,7 @@ model:'.$this->config['openrouter_tool_model']) : 'Something went wrong. Please 
 
             // Check if it's a server overload error
             $errorMessage = $e->getMessage();
-            
+
             if (strpos($errorMessage, 'overloaded') !== false || strpos($errorMessage, '529') !== false) {
                 return $this->formatter->formatOverloadErrorResponse();
             }

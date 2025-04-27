@@ -110,7 +110,9 @@ class CommandHandler
 
             $sendResult = Request::sendMessage([
                 'chat_id' => $chatId,
-                'text' => $summary,
+                'text' => $summary.'
+
+#dailySummary',
                 'parse_mode' => 'HTML'
             ]);
 
@@ -229,23 +231,7 @@ class CommandHandler
                 return false;
             }
 
-            // Process normal response
-            // Check if there are tool calls that need to be processed
-            if (!empty($response['tool_calls'])) {
-                $toolCallsInfo = "Tool calls detected:\n";
-                foreach ($response['tool_calls'] as $toolCall) {
-                    $function = $toolCall['function'] ?? [];
-                    $name = $function['name'] ?? 'unknown';
-                    $args = $function['arguments'] ?? '{}';
-
-                    $toolCallsInfo .= "- {$name}: " . $args . "\n";
-                }
-
-                // For now, just inform about tool calls without actually executing them
-                $responseText = $response['content'] . "\n\n" . $toolCallsInfo;
-            } else {
-                $responseText = $response['content'];
-            }
+            $responseText = $response['content'];
 
             // Send the response
             $sendResult = $this->sender->sendHtmlAsMarkdownMessage(
@@ -269,7 +255,7 @@ class CommandHandler
                 'text' => strip_tags($responseText),
                 'reply_to_message_id' => $messageId,
             ]);
-            
+
             if ($sendResult->isOk()) {
                 $this->logger->logCommand("Fallback text response sent to chat {$chatId}", "mcp");
             } else {
