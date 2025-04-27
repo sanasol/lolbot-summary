@@ -1,7 +1,7 @@
 # syntax=docker/dockerfile:1
 
 # Use FrankenPHP with PHP 8.2 on Alpine as base
-FROM dunglas/frankenphp:latest-php8.2-alpine
+FROM dunglas/frankenphp:php8.4-alpine
 
 # Switch to root for installation tasks
 USER root
@@ -12,6 +12,7 @@ RUN install-php-extensions \
     zip \
     pdo_mysql \
     pdo \
+    redis \
     && apk add --no-cache dcron
 
 # Create app user and group for running as non-root

@@ -5,12 +5,16 @@
     "require": {
         "php": ">=8.1",
         "ext-pdo": "*",
+        "enqueue/redis": "^0.10.9",
         "guzzlehttp/guzzle": "^7.0",
         "inspector-apm/inspector-php": "^3.12",
         "inspector-apm/neuron-ai": "^1.9",
         "longman/telegram-bot": "^0.80",
+        "lucadevelop/telegram-entities-decoder": "^1.3",
+        "predis/predis": "^2.3",
         "smi2/phpclickhouse": "^1.6",
-        "vlucas/phpdotenv": "^5.5"
+        "vlucas/phpdotenv": "^5.5",
+        "wpsocio/telegram-format-text": "^1.0"
     },
     "autoload": {
         "psr-4": {

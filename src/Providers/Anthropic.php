@@ -6,7 +6,6 @@ use NeuronAI\Chat\Messages\AssistantMessage;
 use NeuronAI\Chat\Messages\Message;
 use NeuronAI\Chat\Messages\Usage;
 use NeuronAI\Providers\AIProviderInterface;
-use NeuronAI\Providers\Anthropic\HandleChat;
 use NeuronAI\Providers\Anthropic\HandleStream;
 use NeuronAI\Providers\Anthropic\HandleStructured;
 use NeuronAI\Providers\Anthropic\MessageMapper;

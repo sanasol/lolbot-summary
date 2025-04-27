@@ -25,9 +25,11 @@ class SettingsService
         $this->settingsPath = $settingsPath;
 
         // Create settings directory if it doesn't exist
-        if (!is_dir($this->settingsPath)) {
-            mkdir($this->settingsPath, 0777, true);
-        }
+        if (!is_dir($this->settingsPath) && !mkdir($concurrentDirectory = $this->settingsPath, 0777, true) && !is_dir(
+                $concurrentDirectory
+            )) {
+                throw new \RuntimeException(sprintf('Directory "%s" was not created', $concurrentDirectory));
+            }
     }
 
     /**

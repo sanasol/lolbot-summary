@@ -2,3 +2,5 @@ vendor/
 data/
 config/config.php
 .env
+.idea
+.zencoder

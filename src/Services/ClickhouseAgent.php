@@ -5,7 +5,6 @@ use App\Providers\OpenRouterAi;
 use NeuronAI\Agent;
 use NeuronAI\SystemPrompt;
 use NeuronAI\Providers\AIProviderInterface;
-use NeuronAI\Providers\Anthropic\Anthropic;
 use NeuronAI\Tools\Tool;
 use NeuronAI\Tools\ToolProperty;
 use ClickHouseDB\Client as ClickHouseClient;
@@ -13,6 +12,8 @@ use ClickHouseDB\Client as ClickHouseClient;
 class ClickhouseAgent extends Agent
 {
     private static array $config;
+
+    protected int $toolCalls = 0;
 
     /**
      * Approximate token limit for AI responses
@@ -198,6 +199,17 @@ class ClickhouseAgent extends Agent
     }
 
     /**
+     * Escape a string for use in ClickHouse SQL queries
+     *
+     * @param string $value The string to escape
+     * @return string The escaped string
+     */
+    private function escapeString(string $value): string
+    {
+        return str_replace("'", "\'", $value);
+    }
+
+    /**
      * Truncate optimized results to fit within token limit
      *
      * @param array $optimizedResults Optimized results (columns and rows format)
@@ -271,16 +283,19 @@ class ClickhouseAgent extends Agent
             background: ["You are an AI Agent specialized in writing summaries for data from database.
             Database is clickhouse version 24.10.2.80
             database definition for clickhouse: " . self::$config['clickhouse_db_definition'] . "
+            logs_v2 table available but for requests not more than 1 day
             Databases available: statbate, stripchat, camsoda, bongacams, mfc. Statbate database is chaturbate actually or CB
             By default use statbate database unless otherwise specified.
             DONT MAKE SUMMARIES OF THE ENTIRE DATABASE OR ANYTHING ELSE THAT IS NOT REQUESTED IN THE MESSAGE!
-            DONT MAKE SUMMARIES THAT REQUESTED more than 14 days of data, limit all queries by date to less than 14 days ago or by requestor\'s preference if its not more than 14 days.
+            DONT MAKE SUMMARIES THAT REQUESTED more than 30 days of data, limit all queries by date to less than 30 days ago or by requestor\'s preference if its not more than 30 days.
             By default use statbate database unless otherwise specified.
             all queries must include database name
             Data in database stored in UTC timezone.
             Current time: ".date('Y-m-d H:i:s').".
                 use clickhouse CTE queries to avoid joins and too many queries
-
+                dont use too much tool calls, try to fit request into single complex query
+                if tool call fails, retry again only 10 times
+                Dont make requests that require more than 10 tool calls
                 find the requested room or donator in the database.
                 NAME MUST BE IN LOWERCASE.
                 Use the tools you have available to retrieve the requested data.
@@ -290,7 +305,7 @@ class ClickhouseAgent extends Agent
                 Include any relevant details that may be useful for understanding the content.
                 Include detailed information about what queries made to DB with all important notes, dont report raw queries, but report what tables used and what conditions used
                 
-               Use plain text response without markdown or html formatting
+               Use html formatting for final result, dont use html tables
 "]
         );
     }
@@ -326,7 +341,8 @@ class ClickhouseAgent extends Agent
                 $logMessage = $logPrefix . "Executing tool list_databases..." . json_encode(['databases' => $result]). PHP_EOL;
                 file_put_contents($webhookLogFile, $logMessage . PHP_EOL, FILE_APPEND);
 
-                return json_encode(['databases' => $result]);
+                $this->toolCalls++;
+                return json_encode(['databases' => $result, 'toolCalls' => $this->toolCalls]);
             }),
 
             Tool::make(
@@ -347,6 +363,8 @@ class ClickhouseAgent extends Agent
                     required: false
                 )
             )->setCallable(function (string $database, ?string $like = null) {
+                $this->toolCalls++;
+
                 $clickhouse = new ClickHouseClient([
                     'host' => self::$config['clickhouse']['host'],
                     'port' => self::$config['clickhouse']['port'],
@@ -360,7 +378,7 @@ class ClickhouseAgent extends Agent
                 // Build the query
                 $query = "SHOW TABLES FROM {$escapedDatabase}";
                 if ($like) {
-                    $query .= " LIKE " . $clickhouse->quote($like);
+                    $query .= " LIKE '" . $this->escapeString($like) . "'";
                 }
 
                 // Get tables
@@ -368,7 +386,7 @@ class ClickhouseAgent extends Agent
                 $tables = array_column($tablesStatement->rows(), 'name');
 
                 // Get table comments
-                $tableCommentsQuery = "SELECT name, comment FROM system.tables WHERE database = " . $clickhouse->quote(trim($escapedDatabase, '`'));
+                $tableCommentsQuery = "SELECT name, comment FROM system.tables WHERE database = '" . $this->escapeString(trim($escapedDatabase, '`')) . "'";
                 $tableCommentsResult = $clickhouse->select($tableCommentsQuery)->rows();
                 $tableComments = [];
                 foreach ($tableCommentsResult as $row) {
@@ -376,7 +394,7 @@ class ClickhouseAgent extends Agent
                 }
 
                 // Get column comments
-                $columnCommentsQuery = "SELECT table, name, comment FROM system.columns WHERE database = " . $clickhouse->quote(trim($escapedDatabase, '`'));
+                $columnCommentsQuery = "SELECT table, name, comment FROM system.columns WHERE database = '" . $this->escapeString(trim($escapedDatabase, '`')) . "'";
                 $columnCommentsResult = $clickhouse->select($columnCommentsQuery)->rows();
 
                 $columnComments = [];
@@ -435,6 +453,8 @@ class ClickhouseAgent extends Agent
                 $logMessage .= $logPrefix . "Results: " . json_encode($tablesInfo). PHP_EOL;
                 file_put_contents($webhookLogFile, $logMessage . PHP_EOL, FILE_APPEND);
 
+                $tablesInfo['toolCalls'] = $this->toolCalls;
+
                 return json_encode($tablesInfo);
             }),
 
@@ -449,6 +469,8 @@ class ClickhouseAgent extends Agent
                     required: true
                 )
             )->setCallable(function (string $query) {
+                $this->toolCalls++;
+
                 $logPrefix = "[" . date('Y-m-d H:i:s') . "] [tool call] ";
                 $webhookLogFile = self::$config['log_path'] . '/webhook_' . date('Y-m-d') . '.log';
 
@@ -458,13 +480,13 @@ class ClickhouseAgent extends Agent
 
                 try {
                     // Validate that this is a SELECT query for safety
-                    $trimmedQuery = trim($query);
-                    if (!preg_match('/^SELECT\s/i', $trimmedQuery) && !preg_match('/^with\s/i', $trimmedQuery)) {
-                        return json_encode([
-                            'status' => 'error',
-                            'message' => 'Only SELECT queries are allowed for security reasons'
-                        ]);
-                    }
+//                    $trimmedQuery = trim($query);
+//                    if (!preg_match('/^SELECT\s/i', $trimmedQuery) && !preg_match('/^with\s/i', $trimmedQuery)) {
+//                        return json_encode([
+//                            'status' => 'error',
+//                            'message' => 'Only SELECT queries are allowed for security reasons'
+//                        ]);
+//                    }
 
                     $clickhouse = new ClickHouseClient([
                         'host' => self::$config['clickhouse']['host'],
@@ -487,6 +509,7 @@ class ClickhouseAgent extends Agent
                         $rs = json_encode([
                             'status' => 'Failed to execute query',
                             'error_message' => $e->getMessage(),
+                            'toolCalls' => $this->toolCalls,
                         ]);
 
                         $logMessage = $logPrefix . "Failed to prepare statement for query: " . $rs . PHP_EOL;
@@ -499,6 +522,7 @@ class ClickhouseAgent extends Agent
 //                    $optimizedResult['query'] = $query;
                     if (isset($optimizedResult['rows']) && count($optimizedResult['rows']) === 0) {
                         $optimizedResult['comment'] = 'No results found for this query';
+                        $optimizedResult['toolCalls'] = $this->toolCalls;
                     }
                     // Calculate approximate token count and limit results if needed
                     $resultJson = json_encode($optimizedResult);
@@ -511,9 +535,12 @@ class ClickhouseAgent extends Agent
 
                         // Truncate optimized results to fit within token limit
                         $optimizedResult = $this->truncateOptimizedResultsToTokenLimit($optimizedResult, self::MAX_TOKENS);
-                        $optimizedResult['query'] = $query;
+                        $optimizedResult['toolCalls'] = $this->toolCalls;
+
                         if (count($optimizedResult['rows']) === 0) {
                             $optimizedResult['comment'] = 'No results found for this query';
+                            $optimizedResult['toolCalls'] = $this->toolCalls;
+
                         }
                         $resultJson = json_encode($optimizedResult);
                         $tokenCount = $this->estimateTokenCount($resultJson);
@@ -531,6 +558,7 @@ class ClickhouseAgent extends Agent
                     $logMessage .= $logPrefix . "Error message: " . $e->getMessage(). PHP_EOL;
                     file_put_contents($webhookLogFile, $logMessage . PHP_EOL, FILE_APPEND);
                     return json_encode([
+                        'toolCalls' => $this->toolCalls,
                         'status' => 'error',
                         'message' => 'Query failed: ' . $e->getMessage()
                     ]);

@@ -2,12 +2,8 @@
 
     namespace App\Providers;
 
-    use GuzzleHttp\Exception\GuzzleException;
-    use NeuronAI\Chat\Messages\AssistantMessage;
     use NeuronAI\Chat\Messages\Message;
     use GuzzleHttp\Client;
-    use NeuronAI\Chat\Messages\Usage;
-    use NeuronAI\Exceptions\ProviderException;
     use NeuronAI\Providers\AIProviderInterface;
     use NeuronAI\Providers\HandleClient;
     use NeuronAI\Providers\HandleWithTools;
@@ -19,7 +15,6 @@
     use NeuronAI\Providers\OpenAI\MessageMapper;
     use NeuronAI\Tools\ToolInterface;
     use NeuronAI\Tools\ToolProperty;
-    use Psr\Http\Message\StreamInterface;
 
     class OpenRouterAi implements AIProviderInterface
     {

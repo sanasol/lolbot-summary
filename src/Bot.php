@@ -3,44 +3,54 @@
 namespace App;
 
 use App\Services\AIService;
+use App\Services\MarkdownService;
 use App\Services\SettingsService;
 use Longman\TelegramBot\Telegram;
 use Longman\TelegramBot\Request;
 use Longman\TelegramBot\Entities\Update;
 use Longman\TelegramBot\Exception\TelegramException;
-use GuzzleHttp\Client as HttpClient;
-use GuzzleHttp\Exception\RequestException;
+use RuntimeException;
 
 class Bot
 {
     private Telegram $telegram;
     private array $config;
-    private HttpClient $httpClient;
     private string $logPath;
     private array $chatMessages = []; // In-memory store for messages [chat_id => [timestamp => message_text]]
-    private string $botUsername = ''; // Will be set in constructor
 
     private AIService $aiService;
     private SettingsService $settingsService;
+    private MarkdownService $markdownService;
+
+    /**
+     * Get the bot configuration.
+     *
+     * @return array The bot configuration
+     */
+    public function getConfig(): array
+    {
+        return $this->config;
+    }
 
     public function __construct(array $config)
     {
         $this->config = $config;
         $this->logPath = $config['log_path'] ?? (__DIR__ . '/../data');
 
-        if (!is_dir($this->logPath)) {
-            mkdir($this->logPath, 0777, true);
-        }
+        if (!is_dir($this->logPath) && !mkdir($concurrentDirectory = $this->logPath, 0777, true) && !is_dir(
+                $concurrentDirectory
+            )) {
+                throw new RuntimeException(sprintf('Directory "%s" was not created', $concurrentDirectory));
+            }
 
-        $this->httpClient = new HttpClient();
         $this->settingsService = new SettingsService($this->logPath);
         $this->aiService = new AIService($config, $this->settingsService);
+        $this->markdownService = new MarkdownService();
 
         try {
             $this->telegram = new Telegram($config['telegram_bot_token'], 'newbotname2025bot'); // Replace BotUsername if needed
 
             // Store the bot username for mention detection
-            $this->botUsername = $this->telegram->getBotUsername();
 
             // Set webhook or use getUpdates
             // For production, using a webhook is recommended.
@@ -75,7 +85,7 @@ class Bot
     {
         $files = glob($this->logPath . '/*_messages.json');
         foreach ($files as $file) {
-            if (preg_match('/(\-?\d+)_messages\.json$/', $file, $matches)) {
+            if (preg_match('/(-?\d+)_messages\.json$/', $file, $matches)) {
                 $chatId = (int)$matches[1];
                 $this->loadMessagesFromFile($chatId);
             }
@@ -208,41 +218,58 @@ class Bot
     }
 
     /**
+     * Send a message with HTML formatting converted to MarkdownV2
+     *
+     * @param int $chatId The chat ID to send the message to
+     * @param string $html The HTML text to send
+     * @param int|null $replyToMessageId Optional message ID to reply to
+     * @param array $additionalParams Additional parameters for the sendMessage request
+     * @return \Longman\TelegramBot\Entities\ServerResponse The response from Telegram
+     */
+    public function sendHtmlAsMarkdownMessage(int $chatId, string $html, ?int $replyToMessageId = null, array $additionalParams = []): \Longman\TelegramBot\Entities\ServerResponse
+    {
+        // Convert HTML to Telegram's MarkdownV2 format
+        $formattedText = $this->markdownService->htmlToTelegramMarkdown($html);
+
+        // log the formatted text before sending
+        $logPrefix = "[" . date('Y-m-d H:i:s') . "] [HTML to Markdown Conversion] ";
+        $logMessage = $logPrefix . "Converted HTML to Markdown: " . $formattedText;
+        $logMessage .= PHP_EOL . "Original HTML: " . $html;
+
+        $webhookLogFile = $this->config['log_path'] . '/webhook_' . date('Y-m-d') . '.log';
+        file_put_contents($webhookLogFile, $logPrefix . $logMessage . PHP_EOL, FILE_APPEND);
+
+        // Prepare the request parameters
+        $params = [
+            'chat_id' => $chatId,
+            'text' => $formattedText,
+            'parse_mode' => 'MarkdownV2'
+        ];
+
+        // Add reply_to_message_id if provided
+        if ($replyToMessageId !== null) {
+            $params['reply_to_message_id'] = $replyToMessageId;
+        }
+
+        // Add any additional parameters
+        $params = array_merge($params, $additionalParams);
+
+        // Send the message
+        return Request::sendMessage($params);
+    }
+
+    /**
      * Process a webhook update from Telegram.
      * This method is called by the webhook.php file when a new update is received.
-     * It returns immediately after validating the update and then processes it asynchronously.
+     * It delegates to AsyncWebhookHandler for asynchronous processing.
      *
      * @param string $updateJson The JSON string received from Telegram
      * @return bool Whether the update was validated successfully
      */
     public function processWebhook(string $updateJson): bool
     {
-        try {
-            // Validate the update
-            $update = json_decode($updateJson, true);
-            if (empty($update)) {
-                error_log('Empty or invalid update received');
-                return false;
-            }
-
-            // Log the receipt of the update
-            $logPrefix = "[" . date('Y-m-d H:i:s') . "] [Webhook Received] ";
-            $webhookLogFile = $this->config['log_path'] . '/webhook_' . date('Y-m-d') . '.log';
-            file_put_contents($webhookLogFile, $logPrefix . "Update received and queued for processing" . PHP_EOL, FILE_APPEND);
-            register_shutdown_function([$this, 'processWebhookAsync'], $updateJson);
-            return true;
-        } catch (\Throwable $e) {
-            $logPrefix = "[" . date('Y-m-d H:i:s') . "] [Webhook Error] ";
-            $webhookLogFile = $this->config['log_path'] . '/webhook_' . date('Y-m-d') . '.log';
-            $errorLogFile = $this->config['log_path'] . '/error_' . date('Y-m-d') . '.log';
-
-            $logMessage = $logPrefix . "Error during webhook validation: " . $e->getMessage();
-            file_put_contents($webhookLogFile, $logMessage . PHP_EOL, FILE_APPEND);
-            file_put_contents($errorLogFile, $logMessage . PHP_EOL, FILE_APPEND);
-            error_log($logMessage);
-
-            return false;
-        }
+        // Delegate to AsyncWebhookHandler for asynchronous processing
+        return \App\Services\AsyncWebhookHandler::processAsync($this, $updateJson);
     }
 
     /**
@@ -264,6 +291,15 @@ class Bot
 
             // Create an Update object from the JSON data
             $update = new Update($update, $this->telegram->getBotUsername());
+
+            // $update->getUpdateId()
+            // make code to avoid duplicate process if same update id send twice
+            if ($this->hasDuplicateUpdate($update->getUpdateId())) {
+                $logPrefix = "[" . date('Y-m-d H:i:s') . "] [Duplicate Update] ";
+                $webhookLogFile = $this->config['log_path'] . '/webhook_' . date('Y-m-d') . '.log';
+                file_put_contents($webhookLogFile, $logPrefix . ' Duplicate update received: ' . json_encode($update) . PHP_EOL, FILE_APPEND);
+                return;
+            }
 
             // Check if this is a new message or an edited message
             $isEditedMessage = $update->getEditedMessage() !== null;
@@ -514,10 +550,11 @@ class Bot
             if ($result->isOk()) {
                 echo "Webhook set successfully to: {$url}\n";
                 return true;
-            } else {
-                error_log("Failed to set webhook: " . $result->getDescription());
-                return false;
             }
+
+            error_log("Failed to set webhook: " . $result->getDescription());
+
+            return false;
 
         } catch (TelegramException $e) {
             error_log("Error setting webhook: " . $e->getMessage());
@@ -800,17 +837,6 @@ class Bot
     }
 
     /**
-     * Handle a bot mention in a message
-     *
-     * @param int $chatId The chat ID
-     * @param string $messageText The message text
-     * @param string $username The username of the message sender
-     * @param int $replyToMessageId The message ID to reply to
-     * @param mixed $photos Photos from the message, if any
-     * @return bool Whether the mention was handled successfully
-     */
-
-    /**
      * Handle the /mcp command to process a message using MCP tools
      *
      * @param int $chatId The chat ID
@@ -886,57 +912,56 @@ class Bot
                 }
 
                 return false;
+            }
+
+// Process normal response
+            // Check if there are tool calls that need to be processed
+            if (!empty($response['tool_calls'])) {
+                $toolCallsInfo = "Tool calls detected:\n";
+                foreach ($response['tool_calls'] as $toolCall) {
+                    $function = $toolCall['function'] ?? [];
+                    $name = $function['name'] ?? 'unknown';
+                    $args = $function['arguments'] ?? '{}';
+
+                    $toolCallsInfo .= "- {$name}: " . $args . "\n";
+                }
+
+                // For now, just inform about tool calls without actually executing them
+                $responseText = $response['content'] . "\n\n" . $toolCallsInfo;
             } else {
-                // Process normal response
-                // Check if there are tool calls that need to be processed
-                if (!empty($response['tool_calls'])) {
-                    $toolCallsInfo = "Tool calls detected:\n";
-                    foreach ($response['tool_calls'] as $toolCall) {
-                        $function = $toolCall['function'] ?? [];
-                        $name = $function['name'] ?? 'unknown';
-                        $args = $function['arguments'] ?? '{}';
+                $responseText = $response['content'];
+            }
 
-                        $toolCallsInfo .= "- {$name}: " . $args . "\n";
-                    }
+            // Send the response
+            $sendResult = $this->sendHtmlAsMarkdownMessage(
+                $chatId,
+                $responseText,
+                $messageId
+            );
 
-                    // For now, just inform about tool calls without actually executing them
-                    $responseText = $response['content'] . "\n\n" . $toolCallsInfo;
-                } else {
-                    $responseText = $response['content'];
-                }
+            if ($sendResult->isOk()) {
+                $logMessage = $logPrefix . "Successfully sent MCP response to chat {$chatId}";
+                file_put_contents($webhookLogFile, $logMessage . PHP_EOL, FILE_APPEND);
+                return true;
+            }
 
-                // Send the response
-                $sendResult = Request::sendMessage([
-                    'chat_id' => $chatId,
-                    'text' => $responseText,
-                    'reply_to_message_id' => $messageId,
-                    'parse_mode' => 'MarkdownV2'
-                ]);
+            $logMessage = $logPrefix . "Failed to send MCP response to chat {$chatId}: " . $sendResult->getDescription();
+            file_put_contents($webhookLogFile, $logMessage . PHP_EOL, FILE_APPEND);
+            error_log($logMessage);
 
-                if ($sendResult->isOk()) {
-                    $logMessage = $logPrefix . "Successfully sent MCP response to chat {$chatId}";
-                    file_put_contents($webhookLogFile, $logMessage . PHP_EOL, FILE_APPEND);
-                    return true;
-                } else {
-                    $logMessage = $logPrefix . "Failed to send MCP response to chat {$chatId}: " . $sendResult->getDescription();
-                    file_put_contents($webhookLogFile, $logMessage . PHP_EOL, FILE_APPEND);
-                    error_log($logMessage);
-
-                    $sendResult = Request::sendMessage([
-                        'chat_id' => $chatId,
-                        'text' => strip_tags($responseText),
-                        'reply_to_message_id' => $messageId,
-                    ]);
-                    if ($sendResult->isOk()) {
-                        $logMessage = $logPrefix . "Fallback text response sent to chat {$chatId}";
-                        file_put_contents($webhookLogFile, $logMessage . PHP_EOL, FILE_APPEND);
-                    }
-                    else {
-                        $logMessage = $logPrefix . "Fallback text response also failed to send to chat {$chatId}: " . $sendResult->getDescription();
-                        file_put_contents($webhookLogFile, $logMessage . PHP_EOL, FILE_APPEND);
-                        error_log($logMessage);
-                    }
-                }
+            $sendResult = Request::sendMessage([
+                'chat_id' => $chatId,
+                'text' => strip_tags($responseText),
+                'reply_to_message_id' => $messageId,
+            ]);
+            if ($sendResult->isOk()) {
+                $logMessage = $logPrefix . "Fallback text response sent to chat {$chatId}";
+                file_put_contents($webhookLogFile, $logMessage . PHP_EOL, FILE_APPEND);
+            }
+            else {
+                $logMessage = $logPrefix . "Fallback text response also failed to send to chat {$chatId}: " . $sendResult->getDescription();
+                file_put_contents($webhookLogFile, $logMessage . PHP_EOL, FILE_APPEND);
+                error_log($logMessage);
             }
 
             return false;
@@ -1057,12 +1082,13 @@ class Bot
                 $logMessage = $logPrefix . "Successfully sent {$responseType} response to chat {$chatId}";
                 file_put_contents($webhookLogFile, $logMessage . PHP_EOL, FILE_APPEND);
                 return true;
-            } else {
-                $logMessage = $logPrefix . "Failed to send {$responseType} response to chat {$chatId}: " . $sendResult->getDescription();
-                file_put_contents($webhookLogFile, $logMessage . PHP_EOL, FILE_APPEND);
-                error_log($logMessage);
-                return false;
             }
+
+            $logMessage = $logPrefix . "Failed to send {$responseType} response to chat {$chatId}: " . $sendResult->getDescription();
+            file_put_contents($webhookLogFile, $logMessage . PHP_EOL, FILE_APPEND);
+            error_log($logMessage);
+
+            return false;
         }
 
         return false;
@@ -1373,5 +1399,23 @@ class Bot
         }
 
         return null;
+    }
+
+    private function hasDuplicateUpdate(int $getUpdateId)
+    {
+        // use json file to store previous updates
+        $json_file = $this->config['log_path'] . "/previous_updates.json";
+        $previous_updates = [];
+        if (file_exists($json_file)) {
+            $previous_updates = json_decode(file_get_contents($json_file), true);
+        }
+        if (in_array($getUpdateId, $previous_updates)) {
+            return true;
+        }
+
+        $previous_updates[] = $getUpdateId;
+        file_put_contents($json_file, json_encode($previous_updates));
+
+        return false;
     }
 }

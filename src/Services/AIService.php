@@ -6,23 +6,18 @@ use GuzzleHttp\Client as HttpClient;
 use GuzzleHttp\Exception\ClientException;
 use GuzzleHttp\Exception\RequestException;
 use Inspector\Configuration;
-use NeuronAI\Chat\Messages\UserMessage;
-use NeuronAI\Chat\Messages\SystemMessage;
 use NeuronAI\Exceptions\NeuronException;
-use NeuronAI\Exceptions\ProviderException;
 use NeuronAI\Observability\AgentMonitoring;
 
 class AIService
 {
     private HttpClient $httpClient;
     private array $config;
-    private string $logPath;
-    private ?SettingsService $settingsService = null;
+    private ?SettingsService $settingsService;
 
     public function __construct(array $config, ?SettingsService $settingsService = null)
     {
         $this->config = $config;
-        $this->logPath = $config['log_path'] ?? (__DIR__ . '/../../data');
         $this->httpClient = new HttpClient();
         $this->settingsService = $settingsService;
     }
@@ -78,6 +73,14 @@ class AIService
             // Get response from the agent
             $response = $agent->chat($userMessage);
             $content = $response->getContent();
+            $usage = $response->getUsage();
+            $in_tokens = $usage?->inputTokens;
+            $out_tokens = $usage?->outputTokens;
+//
+//            $inputPrice = (3 / 1000000) * $in_tokens; // Calculate price based on tokens used
+//            $outputPrice = (15 / 1000000) * $out_tokens; // Calculate price based on tokens produced
+//            $cost = round($inputPrice + $outputPrice, 2);
+//
 //
 //            foreach ($response as $chunk) {
 //                // Extract content from the chunk
@@ -93,7 +96,8 @@ class AIService
 
             return [
                 'type' => 'text',
-                'content' => $content,
+                'content' => !empty($content) ? ($content.' 
+model:'.$this->config['openrouter_tool_model']) : 'Something went wrong. Please try again later. model: '.$this->config['openrouter_tool_model']
             ];
 
         } catch (ClientException $e) {
@@ -949,7 +953,7 @@ class AIService
             $languageInstruction = "Generate the summary in English language.";
         }
 
-        $prompt = "Summarize the following conversation that happened in a Telegram group chat over the last 24 hours. {$languageInstruction} Keep it concise and capture the main topics.\n\n";
+        $prompt = "Summarize the following conversation that happened in a Telegram group chat over the last 24 hours. {$languageInstruction} Keep it concise and capture the main topics. Make statistics of most active users: messages sent, symbol usage etc. Show total sent words/symbols stats and approximate time used to write it(i.e. time spent in chat instead of work haha)\n\n";
         if (!empty($chatInfo)) {
             $prompt .= "Chat Information:\n$chatInfo\n";
         }

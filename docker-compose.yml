@@ -21,8 +21,41 @@ services:
       - TELEGRAM_BOT_TOKEN=${TELEGRAM_BOT_TOKEN}
       - OPENROUTER_KEY=${OPENROUTER_KEY}
       - SERVER_NAME=${SERVER_NAME}
+      - REDIS_HOST=redis
+      - REDIS_PORT=6379
+    depends_on:
+      - redis
+
+  queue-worker:
+    build: .
+    image: telegram-summary-bot
+    volumes:
+      # Mount source code but not overwrite system files
+      - ./src:/app/src
+      - ./config:/app/config
+      - ./composer.json:/app/composer.json
+      - ./composer.lock:/app/composer.lock
+      # Persistent data storage
+      - ./data:/app/data
+    working_dir: /app
+    restart: unless-stopped
+    environment:
+      - TELEGRAM_BOT_TOKEN=${TELEGRAM_BOT_TOKEN}
+      - OPENROUTER_KEY=${OPENROUTER_KEY}
+      - REDIS_HOST=redis
+      - REDIS_PORT=6379
+    depends_on:
+      - redis
+    command: php /app/src/queue_worker.php
+
+  redis:
+    image: redis:alpine
+    volumes:
+      - redis_data:/data
+    restart: unless-stopped
 
 volumes:
   caddy_data:
   caddy_config:
+  redis_data:
 

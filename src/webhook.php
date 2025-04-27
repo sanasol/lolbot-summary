@@ -4,12 +4,17 @@
  *
  * This file receives and processes webhook updates from the Telegram API.
  * Set your webhook URL to point to this file, e.g., https://yourdomain.com/webhook.php
+ *
+ * This implementation uses FrankenPHP's features for asynchronous processing.
  */
 
 require_once __DIR__ . '/../vendor/autoload.php';
 
 use App\Bot;
 use Dotenv\Dotenv;
+
+// Check if running under FrankenPHP
+$isFrankenPHP = function_exists('frankenphp_handle_request');
 
 // Load environment variables from .env file if it exists
 if (file_exists(__DIR__ . '/../.env')) {
@@ -47,7 +52,7 @@ try {
     if (!empty($content)) {
         file_put_contents(
             $config['log_path'] . '/webhook_' . date('Y-m-d') . '.log',
-            '[' . date('Y-m-d H:i:s') . '] ' . $content . PHP_EOL,
+            '[' . date('Y-m-d H:i:s') . '] ' . ($isFrankenPHP ? '[FrankenPHP] ' : '') . $content . PHP_EOL,
             FILE_APPEND
         );
     }
@@ -61,7 +66,22 @@ try {
     if ($result) {
         // Return a 200 OK response to Telegram immediately
         http_response_code(200);
-        exit('OK');
+
+        // If running under FrankenPHP, use its features to optimize the response
+        if ($isFrankenPHP && function_exists('frankenphp_finish_request')) {
+            // Send the response immediately and continue processing in the background
+            echo 'OK';
+            frankenphp_finish_request();
+
+            // Log that we're using FrankenPHP's finish_request
+            file_put_contents(
+                $config['log_path'] . '/webhook_' . date('Y-m-d') . '.log',
+                '[' . date('Y-m-d H:i:s') . '] [FrankenPHP] Using frankenphp_finish_request for async processing' . PHP_EOL,
+                FILE_APPEND
+            );
+        } else {
+            exit('OK');
+        }
     } else {
         // If there was a validation error, return a 400 Bad Request
         http_response_code(400);
@@ -71,6 +91,14 @@ try {
 } catch (\Throwable $e) {
     // Log the error
     error_log('Webhook Error: ' . $e->getMessage() . PHP_EOL . $e->getTraceAsString());
+
+    if (!empty($config['log_path'])) {
+        file_put_contents(
+            $config['log_path'] . '/error_' . date('Y-m-d') . '.log',
+            '[' . date('Y-m-d H:i:s') . '] Webhook Error: ' . $e->getMessage() . PHP_EOL . $e->getTraceAsString() . PHP_EOL,
+            FILE_APPEND
+        );
+    }
 
     // Return a 500 error response
     http_response_code(500);
