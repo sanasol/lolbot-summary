@@ -1,46 +1,135 @@
 <?php
+
 namespace App\Services;
 
 use App\Providers\OpenRouterAi;
-use NeuronAI\Agent;
-use NeuronAI\SystemPrompt;
+use ClickHouseDB\Client as ClickHouseClient;
+use NeuronAI\Chat\Messages\Message;
+use NeuronAI\Exceptions\MissingCallbackParameter;
+use NeuronAI\Exceptions\ToolCallableNotSet;
+use NeuronAI\Observability\Events\InstructionsChanged;
+use NeuronAI\Observability\Events\InstructionsChanging;
+use NeuronAI\Observability\Events\VectorStoreResult;
+use NeuronAI\Observability\Events\VectorStoreSearching;
 use NeuronAI\Providers\AIProviderInterface;
+use NeuronAI\Providers\Anthropic\Anthropic;
+use NeuronAI\RAG\Embeddings\EmbeddingsProviderInterface;
+use NeuronAI\RAG\Embeddings\VoyageEmbeddingProvider;
+use NeuronAI\RAG\RAG;
+use NeuronAI\RAG\VectorStore\PineconeVectoreStore;
+use NeuronAI\RAG\VectorStore\PineconeVectorStore;
+use NeuronAI\RAG\VectorStore\VectorStoreInterface;
+use NeuronAI\SystemPrompt;
 use NeuronAI\Tools\Tool;
 use NeuronAI\Tools\ToolProperty;
-use ClickHouseDB\Client as ClickHouseClient;
 
-class ClickhouseAgent extends Agent
+class RagAgent extends RAG
 {
+
     private static array $config;
-    private bool $hasActiveSubscription = false;
 
     protected int $toolCalls = 0;
 
     /**
      * Approximate token limit for AI responses
      */
-    private const MAX_TOKENS = 50000;
+    private const MAX_TOKENS = 200000;
 
-    public function __construct(array $config = [], bool $hasActiveSubscription = false)
+    public function __construct(array $config = [])
     {
         self::$config = $config;
-        $this->hasActiveSubscription = $hasActiveSubscription;
     }
-
 
     protected function provider(): AIProviderInterface
     {
-        // return an AI provider instance (Anthropic, OpenAI, Mistral, etc.)
-//        return new Anthropic(
-//            key: self::$config['anthropic']['key'],
-//            model: self::$config['anthropic']['model'],
-//        );
-        // Use OpenRouterAi provider instead of Anthropic
         return new OpenRouterAi(
             key: self::$config['openrouter_key'],
             model: self::$config['openrouter_tool_model'],
         );
     }
+
+    protected function embeddings(): EmbeddingsProviderInterface
+    {
+        return new \NeuronAI\RAG\Embeddings\VoyageEmbeddingsProvider(
+            key: 'pa-dwCoxfN7QcW0n57a7ND9vuSY-yrSafF3bEjfqmOh01d',
+            model: 'voyage-code-3',
+        );
+    }
+
+    protected function vectorStore(): VectorStoreInterface
+    {
+        return new PineconeVectorStore(
+            key: 'pcsk_69TdUV_AMvUnpgXuucbZj6KHPEWSNv1aGbKUjbjFghL6SMVcrdhBrceuBLPRSzvKWW8YvG',
+            indexUrl: 'https://statbate-69i05hm.svc.aped-4627-b74a.pinecone.io'
+        );
+    }
+
+
+    /**
+     * @throws MissingCallbackParameter
+     * @throws ToolCallableNotSet
+     */
+    public function answer(Message $question, int $k = 4): Message
+    {
+        $this->notify('rag-start');
+
+        $this->retrieval($question, $k);
+
+        $response = $this->chat($question);
+
+        $this->notify('rag-stop');
+        return $response;
+    }
+
+
+    private function searchDocuments(string $question, int $k): array
+    {
+        $embedding = $this->embeddings()->embedText($question);
+        $docs = $this->vectorStore()->similaritySearch($embedding, $k);
+
+        $retrievedDocs = [];
+
+        foreach ($docs as $doc) {
+            //md5 for removing duplicates
+            $retrievedDocs[\md5($doc->content)] = $doc;
+        }
+
+        return \array_values($retrievedDocs);
+    }
+
+    protected function retrieval(Message $question, int $k = 4): void
+    {
+        $this->notify(
+            'rag-vectorstore-searching',
+            new VectorStoreSearching($question)
+        );
+        $documents = $this->searchDocuments($question->getContent(), $k);
+
+        var_dump($documents);
+        $this->notify(
+            'rag-vectorstore-result',
+            new VectorStoreResult($question, $documents)
+        );
+
+        $originalInstructions = $this->instructions();
+        $this->notify(
+            'rag-instructions-changing',
+            new InstructionsChanging($originalInstructions)
+        );
+        $this->setSystemMessage($documents, $k);
+
+        var_dump($this->instructions());
+        $this->notify(
+            'rag-instructions-changed',
+            new InstructionsChanged($originalInstructions, $this->instructions())
+        );
+    }
+
+
+
+
+
+
 
     /**
      * Estimate token count for a string
@@ -103,7 +192,7 @@ class ClickhouseAgent extends Agent
         if (count($truncatedResults) < count($results)) {
             $truncatedResults[] = [
                 '_note' => 'Results truncated to fit within ' . $maxTokens . ' token limit. ' .
-                           'Showing ' . count($truncatedResults) . ' of ' . count($results) . ' results.'
+                    'Showing ' . count($truncatedResults) . ' of ' . count($results) . ' results.'
             ];
         }
 
@@ -273,7 +362,7 @@ class ClickhouseAgent extends Agent
         // Add a note about truncation if needed
         if (count($truncatedRows) < count($rows)) {
             $result['_note'] = 'Results truncated to fit within ' . $maxTokens . ' token limit. ' .
-                           'Showing ' . count($truncatedRows) . ' of ' . count($rows) . ' rows.';
+                'Showing ' . count($truncatedRows) . ' of ' . count($rows) . ' rows.';
         }
 
         return $result;
@@ -281,49 +370,7 @@ class ClickhouseAgent extends Agent
 
     public function instructions(): string
     {
-        $timeLimitInstructions = "";
-        if (!$this->hasActiveSubscription) {
-            $timeLimitInstructions = "
-            1. DONT MAKE SUMMARIES THAT REQUESTED more than 30 days of data, limit all queries by date to not more than 30 days ago from current date.
-            2. DONT QUERY any data before this date ".date('Y-m-d', strtotime('-1 month'))."
-            3. DONT ANSWER questions about before this date ".date('Y-m-d', strtotime('-1 month'))."
-            4. DONT MAKE CLICKHOUSE queries that can use return anything before this date ".date('Y-m-d', strtotime('-1 month'))."
-            5. DONT return any data before this date ".date('Y-m-d', strtotime('-1 month'))."";
-        }
-
-        return new SystemPrompt(
-            background: ["You are an AI Agent specialized in writing summaries for data from database.
-            Current time: ".date('H:i:s').".
-            Current date: ".date('Y-m-d').".
-            Database is clickhouse version 24.10.2.80
-            database definition for clickhouse: " . self::$config['clickhouse_db_definition'] . "
-            logs_v2 table available but for requests not more than 1 day
-            room_activity each record is 1 minute but must be grouped, can contain duplicated records.
-            Databases available: statbate, stripchat, camsoda, bongacams, mfc. Statbate database is chaturbate actually or CB
-            By default use statbate database unless otherwise specified.
-            DONT MAKE SUMMARIES OF THE ENTIRE DATABASE OR ANYTHING ELSE THAT IS NOT REQUESTED IN THE MESSAGE!" .
-            $timeLimitInstructions . "
-            By default use statbate database unless otherwise specified.
-            all queries must include database name
-            Data in database stored in UTC timezone.
-            Rooms gender mapping: 0=Male, 1=Female, 2=Trans, 3=Couple.
-            Messages gender mapping: f=Female, m=Male, c=Couple, s=Trans.
-                use clickhouse CTE queries to avoid joins and too many queries
-                dont use too much tool calls, try to fit request into single complex query
-                if tool call fails, retry again only 10 times
-                Dont make requests that require more than 10 tool calls
-                find the requested room or donator in the database.
-                NAME MUST BE IN LOWERCASE.
-                Use the tools you have available to retrieve the requested data.
-                Write the analysis and write it down.
-
-                Provide a summary of the content.
-                Include any relevant details that may be useful for understanding the content.
-                Include detailed information about what queries made to DB with all important notes, dont report raw queries, but report what tables used and what conditions used
-
-               Use html formatting for final result, dont use html tables
-"]
-        );
+        return $this->instructions;
     }
 
     protected function tools(): array

@@ -3,6 +3,7 @@
 namespace App;
 
 use App\Services\AIService;
+use App\Services\AntiSpamHandler;
 use App\Services\BotMentionHandler;
 use App\Services\CommandHandler;
 use App\Services\LoggerService;
@@ -30,6 +31,7 @@ class Bot
     private CommandHandler $commandHandler;
     private BotMentionHandler $mentionHandler;
     private WebhookProcessor $webhookProcessor;
+    private AntiSpamHandler $antiSpamHandler;
 
     // For daily summary scheduling
     private $lastSummaryCheckTime = 0;
@@ -69,6 +71,8 @@ class Bot
                 $this->mentionHandler,
                 $this->commandHandler,
                 $this->logger,
+                $this->aiService,
+                $this->antiSpamHandler,
                 $this->config,
                 $this->telegram->getBotUsername()
             );
@@ -90,14 +94,14 @@ class Bot
         $this->settingsService = new SettingsService($this->logPath);
         $this->messageStorage = new MessageStorage($this->logPath);
         $this->markdownService = new MarkdownService();
-        
+
         // AI service depends on settings and logger
         $this->aiService = new AIService($this->config, $this->settingsService, $this->logger);
-        
+
         // Services that depend on other services
         $this->sender = new TelegramSender(
-            $this->markdownService, 
-            $this->logger, 
+            $this->markdownService,
+            $this->logger,
             $this->config,
             $this->messageStorage
         );
@@ -114,6 +118,12 @@ class Bot
             $this->logger,
             $this->sender,
             $this->config
+        );
+
+        // Initialize AntiSpamHandler
+        $this->antiSpamHandler = new AntiSpamHandler(
+            $this->config,
+            $this->logger
         );
     }
 

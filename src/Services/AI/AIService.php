@@ -44,7 +44,7 @@ class AIService implements AIServiceInterface
         $this->formatter = new ResponseFormatter();
 
         // Initialize generators
-        $this->mcpGenerator = new MCPResponseGenerator($this->config, $this->formatter, $this->logger);
+        $this->mcpGenerator = new MCPResponseGenerator($this->config, $this->formatter, $this->logger, $this->settingsService);
         $this->mentionGenerator = new MentionResponseGenerator($this->config, $this->promptBuilder, $this->formatter, $this->logger);
         $this->imageProcessor = new ImageProcessor($this->config, $this->promptBuilder, $this->formatter, $this->logger);
         $this->summaryGenerator = new SummaryGenerator($this->config, $this->promptBuilder, $this->formatter, $this->logger);
@@ -68,13 +68,14 @@ class AIService implements AIServiceInterface
      * @param string $messageText The original message text
      * @param string $username The username of the message sender
      * @param string $chatContext Optional context from recent chat messages
+     * @param int|null $userId The user ID for checking subscription status
      * @return array The generated response.
      *              Format: ['type' => 'text', 'content' => string, 'tool_calls' => array|null]
      *              Or error: ['type' => 'error', 'content' => string, 'error_type' => string]
      */
-    public function generateMCPResponse(string $messageText, string $username, string $chatContext = ''): array
+    public function generateMCPResponse(string $messageText, string $username, string $chatContext = '', ?int $userId = null): array
     {
-        return $this->mcpGenerator->generate($messageText, $username, $chatContext);
+        return $this->mcpGenerator->generate($messageText, $username, $chatContext, $userId);
     }
 
     /**

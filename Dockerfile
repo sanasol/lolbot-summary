@@ -10,6 +10,7 @@ USER root
 # and system dependencies (dcron for cron functionality)
 RUN install-php-extensions \
     zip \
+    curl \
     pdo_mysql \
     pdo \
     redis \

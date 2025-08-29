@@ -42,13 +42,14 @@ class AIService implements AIServiceInterface
      * @param string $messageText The original message text
      * @param string $username The username of the message sender
      * @param string $chatContext Optional context from recent chat messages
+     * @param int|null $userId The user ID for checking subscription status
      * @return array The generated response.
      *              Format: ['type' => 'text', 'content' => string, 'tool_calls' => array|null]
      *              Or error: ['type' => 'error', 'content' => string, 'error_type' => string]
      */
-    public function generateMCPResponse(string $messageText, string $username, string $chatContext = ''): array
+    public function generateMCPResponse(string $messageText, string $username, string $chatContext = '', ?int $userId = null): array
     {
-        return $this->implementation->generateMCPResponse($messageText, $username, $chatContext);
+        return $this->implementation->generateMCPResponse($messageText, $username, $chatContext, $userId);
     }
 
     /**

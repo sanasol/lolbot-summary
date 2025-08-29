@@ -91,7 +91,7 @@ class SummaryGenerator
 
         // Build the prompt
         $prompt = $this->promptBuilder->buildSummaryPrompt($messages, $language, $chatInfo);
-        
+
         // Build the system prompt
         $systemPrompt = $this->promptBuilder->buildSummarySystemPrompt($language);
 

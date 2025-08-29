@@ -58,18 +58,23 @@ class CommandHandler
             return;
         }
 
+        if ($chatId > 0) {
+            $this->logger->logCommand("Summaries are disabled for chat {$chatId}", "summary");
+            return;
+        }
+
         $messages = $this->messageStorage->getRecentMessages($chatId, 24);
         $messageCount = count($messages);
         $this->logger->logCommand("Retrieved {$messageCount} messages for chat {$chatId}", "summary");
 
         if (empty($messages)) {
             $this->logger->logCommand("No messages found to summarize for chat {$chatId}", "summary");
-
-            Request::sendMessage([
-                'chat_id' => $chatId,
-                'text' => 'No messages found in the last 24 hours to summarize\.',
-                'parse_mode' => 'MarkdownV2'
-            ]);
+//
+//            Request::sendMessage([
+//                'chat_id' => $chatId,
+//                'text' => 'No messages found in the last 24 hours to summarize\.',
+//                'parse_mode' => 'MarkdownV2'
+//            ]);
             return;
         }
 
@@ -108,11 +113,12 @@ class CommandHandler
             $this->logger->logCommand("Sending summary ({$summaryLength} chars) to chat {$chatId}", "summary");
             $this->logger->log($summary, "Summary Content", "webhook");
 
+            $summaryWithBlockquote = "<blockquote expandable>" . $summary . "</blockquote>
+
+#dailySummary";
             $sendResult = Request::sendMessage([
                 'chat_id' => $chatId,
-                'text' => $summary.'
-
-#dailySummary',
+                'text' => $summaryWithBlockquote,
                 'parse_mode' => 'HTML'
             ]);
 
@@ -149,11 +155,11 @@ class CommandHandler
         } else {
             $this->logger->logError("Failed to generate summary for chat {$chatId}", "Command:summary");
 
-            Request::sendMessage([
-                'chat_id' => $chatId,
-                'text' => 'Sorry, I couldn\'t generate a summary at this time\.',
-                'parse_mode' => 'MarkdownV2'
-            ]);
+//            Request::sendMessage([
+//                'chat_id' => $chatId,
+//                'text' => 'Sorry, I couldn\'t generate a summary at this time\.',
+//                'parse_mode' => 'MarkdownV2'
+//            ]);
         }
     }
 
@@ -164,9 +170,10 @@ class CommandHandler
      * @param string $messageText The message text after the command
      * @param string $username The username of the message sender
      * @param int $messageId The message ID to reply to
+     * @param int|null $userId The user ID for checking subscription status
      * @return bool Whether the command was handled successfully
      */
-    public function handleMCPCommand(int $chatId, string $messageText, string $username, int $messageId): bool
+    public function handleMCPCommand(int $chatId, string $messageText, string $username, int $messageId, ?int $userId = null): bool
     {
         try {
             // Log the command
@@ -201,7 +208,7 @@ class CommandHandler
             }
 
             // Generate response using MCP
-            $response = $this->generateMCPResponse($messageText, $username, $chatContext);
+            $response = $this->generateMCPResponse($messageText, $username, $chatContext, $userId);
 
             // Check if this is an error response
             if (isset($response['type']) && $response['type'] === 'error') {
@@ -584,10 +591,146 @@ class CommandHandler
      * @param string $messageText The message text to process
      * @param string $username The username of the message sender
      * @param string $chatContext Optional context from recent chat messages
+     * @param int|null $userId The user ID for checking subscription status
      * @return array The generated response or error information
      */
-    private function generateMCPResponse(string $messageText, string $username, string $chatContext = ''): array
+    private function generateMCPResponse(string $messageText, string $username, string $chatContext = '', ?int $userId = null): array
     {
-        return $this->aiService->generateMCPResponse($messageText, $username, $chatContext);
+        return $this->aiService->generateMCPResponse($messageText, $username, $chatContext, $userId);
+    }
+
+    /**
+     * Handle the /account command to save external user account identifier
+     * This command only works in private messages to the bot
+     *
+     * @param int $chatId The chat ID
+     * @param string $accountIdentifier The account identifier to save
+     * @param int $userId The user ID
+     * @param int $messageId The message ID to reply to
+     * @param bool $isPrivateChat Whether this is a private chat
+     * @return bool Whether the command was handled successfully
+     */
+    public function handleAccountCommand(int $chatId, string $accountIdentifier, int $userId, int $messageId, bool $isPrivateChat): bool
+    {
+        try {
+            // Log the command
+            $this->logger->logCommand(
+                "Received /account command in chat {$chatId} with identifier: " . substr($accountIdentifier, 0, 10) . (strlen($accountIdentifier) > 10 ? '...' : ''),
+                "account"
+            );
+
+            // Check if this is a private chat
+            if (!$isPrivateChat) {
+                $this->logger->logCommand("Account command rejected - not a private chat", "account");
+
+                Request::sendMessage([
+                    'chat_id' => $chatId,
+                    'text' => '⚠️ This command can only be used in private messages to the bot for security reasons.',
+                    'reply_to_message_id' => $messageId,
+                ]);
+
+                return false;
+            }
+
+            // If no account identifier provided, send usage instructions
+            if (empty(trim($accountIdentifier))) {
+                $helpText = "Please provide your account identifier after the /account command. For example:\n/account your_account_identifier";
+
+                $sendResult = Request::sendMessage([
+                    'chat_id' => $chatId,
+                    'text' => $helpText,
+                    'reply_to_message_id' => $messageId,
+                ]);
+
+                return $sendResult->isOk();
+            }
+
+            // Verify the account identifier by making an API call
+            $isValid = $this->verifyAccountIdentifier($accountIdentifier);
+
+            if (!$isValid) {
+                $this->logger->logCommand("Invalid account identifier provided: {$accountIdentifier}", "account");
+
+                Request::sendMessage([
+                    'chat_id' => $chatId,
+                    'text' => '❌ The account identifier you provided is invalid or has no active subscription. Please check and try again.',
+                    'reply_to_message_id' => $messageId,
+                ]);
+
+                return false;
+            }
+
+            // Save the account identifier in user settings
+            $this->settingsService->updateSetting($userId, 'account_identifier', $accountIdentifier);
+
+            $this->logger->logCommand("Successfully saved account identifier for user {$userId}", "account");
+
+            Request::sendMessage([
+                'chat_id' => $chatId,
+                'text' => '✅ Your account identifier has been successfully saved and verified. You now have access to extended data queries beyond the 30-day limitation.',
+                'reply_to_message_id' => $messageId,
+            ]);
+
+            return true;
+        } catch (\Exception $e) {
+            $this->logger->logError("Error handling account command", "Command:account", $e);
+
+            Request::sendMessage([
+                'chat_id' => $chatId,
+                'text' => 'Sorry, an error occurred while processing your request.',
+                'reply_to_message_id' => $messageId,
+            ]);
+
+            return false;
+        }
+    }
+
+    /**
+     * Verify an account identifier by making an API call
+     *
+     * @param string $accountIdentifier The account identifier to verify
+     * @return bool Whether the account identifier is valid and has an active subscription
+     */
+    private function verifyAccountIdentifier(string $accountIdentifier): bool
+    {
+        try {
+            $client = $this->getHttpClient();
+
+            $response = $client->request('GET', 'https://plus.statbate.com/api/me/simple', [
+                'headers' => [
+                    'accept' => 'application/json',
+                    'Authorization' => 'Bearer ' . $accountIdentifier
+                ]
+            ]);
+
+            $statusCode = $response->getStatusCode();
+
+            if ($statusCode === 200) {
+                $data = json_decode($response->getBody(), true);
+
+                // Check if the user has an active subscription
+                if (isset($data['subscription']) && isset($data['subscription']['is_active']) && $data['subscription']['is_active'] === true) {
+                    return true;
+                }
+            }
+
+            return false;
+        } catch (\Exception $e) {
+            $this->logger->logError("Error verifying account identifier: " . $e->getMessage(), "Account Verification", $e);
+            return false;
+        }
+    }
+
+    /**
+     * Get HTTP client for API requests
+     *
+     * @return \GuzzleHttp\Client
+     */
+    private function getHttpClient(): \GuzzleHttp\Client
+    {
+        return new \GuzzleHttp\Client([
+            'timeout' => 10,
+            'connect_timeout' => 5,
+        ]);
     }
 }

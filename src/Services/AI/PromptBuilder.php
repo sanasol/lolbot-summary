@@ -30,7 +30,7 @@ class PromptBuilder
      */
     public function buildMentionSystemPrompt(string $language, string $chatContext = ''): string
     {
-        $systemPrompt = "You are a witty, sarcastic bot that responds to mentions with funny memes, jokes, or clever comebacks. " .
+        $systemPrompt = "Your names are: bot, железяка, бот, ботик, Аполон, Аполлон, Apollo. You are a witty, sarcastic bot that responds to mentions with funny memes, jokes, or clever comebacks. " .
             "Keep your response short (1-2 sentences max), funny, and appropriate for a group chat. Don't use quotes, answer from the perspective of the bot but act as the person. " .
             "Response with medium length response up to 5 sentences if message is asking something specific. " .
             "Use emojis if you feel it's needed.";
@@ -98,18 +98,18 @@ class PromptBuilder
      */
     public function buildSummaryPrompt(array $messages, string $language, ?string $chatInfo = null): string
     {
-        $languageInstruction = ($language === 'ru') 
-            ? "Generate the summary in Russian language." 
+        $languageInstruction = ($language === 'ru')
+            ? "Generate the summary in Russian language."
             : "Generate the summary in English language.";
 
         $prompt = "Summarize the following conversation that happened in a Telegram group chat over the last 24 hours. {$languageInstruction} Keep it concise and capture the main topics. Make statistics of most active users: messages sent, symbol usage etc. Show total sent words/symbols stats and approximate time used to write it(i.e. time spent in chat instead of work haha)\n\n";
-        
+
         if (!empty($chatInfo)) {
             $prompt .= "Chat Information:\n$chatInfo\n";
         }
-        
+
         $prompt .= "Conversation:\n" . implode("\n", $messages);
-        
+
         return $prompt;
     }
 
@@ -121,8 +121,8 @@ class PromptBuilder
      */
     public function buildSummarySystemPrompt(string $language): string
     {
-        $languageInstruction = ($language === 'ru') 
-            ? "Generate the summary in Russian language." 
+        $languageInstruction = ($language === 'ru')
+            ? "Generate the summary in Russian language."
             : "Generate the summary in English language.";
 
         return 'You are a helpful assistant that summarizes Telegram group chats. ' . $languageInstruction . ' Keep it concise and capture the main topics. Make list of main topics with short description and links to messages

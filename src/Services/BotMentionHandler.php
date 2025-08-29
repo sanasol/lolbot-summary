@@ -2,6 +2,7 @@
 
 namespace App\Services;
 
+use Longman\TelegramBot\Exception\TelegramException;
 use Longman\TelegramBot\Request;
 
 /**
@@ -75,7 +76,7 @@ class BotMentionHandler
 
         // Get more recent messages from the chat for context (increased from default)
         // Get more messages if this is a reply to bot to provide better context
-        $contextMessageCount = $isReplyToBot ? 15 : 10; // Get more context for replies to bot
+        $contextMessageCount = $isReplyToBot ? 100 : 50; // Get more context for replies to bot
         $recentMessages = $this->messageStorage->getRecentChatContext($chatId, $contextMessageCount);
         $chatContext = '';
 
@@ -96,6 +97,17 @@ class BotMentionHandler
                     'text' => $response['content'],
                     'reply_to_message_id' => $replyToMessageId,
                 ]);
+
+                if ($sendResult->isOk()) {
+                    $this->logger->logBotMention('Send ok');
+                } else {
+                    $sendResult = Request::sendMessage([
+                        'chat_id' => $chatId,
+                        'text' => strip_tags($response['content']),
+                        'reply_to_message_id' => $replyToMessageId,
+                    ]);
+                    $this->logger->logBotMention('resend with strip tags, TG exception');
+                }
 
                 $responseType = 'text';
             } else if ($response['type'] === 'image' && !empty($response['image_url'])) {

@@ -4,6 +4,7 @@ namespace App\Services;
 
 use Longman\TelegramBot\Entities\Update;
 use Longman\TelegramBot\Exception\TelegramException;
+use Longman\TelegramBot\Request;
 
 /**
  * Processes webhook updates from Telegram
@@ -14,6 +15,8 @@ class WebhookProcessor
     private BotMentionHandler $mentionHandler;
     private CommandHandler $commandHandler;
     private LoggerService $logger;
+    private AIService $aiService;
+    private AntiSpamHandler $antiSpamHandler;
     private array $config;
     private string $botUsername;
 
@@ -22,6 +25,8 @@ class WebhookProcessor
         BotMentionHandler $mentionHandler,
         CommandHandler $commandHandler,
         LoggerService $logger,
+        AIService $aiService,
+        AntiSpamHandler $antiSpamHandler,
         array $config,
         string $botUsername
     ) {
@@ -29,8 +34,10 @@ class WebhookProcessor
         $this->mentionHandler = $mentionHandler;
         $this->commandHandler = $commandHandler;
         $this->logger = $logger;
+        $this->antiSpamHandler = $antiSpamHandler;
         $this->config = $config;
         $this->botUsername = $botUsername;
+        $this->aiService = $aiService;
     }
 
     /**
@@ -87,6 +94,20 @@ class WebhookProcessor
                 // Get caption if available (for photos)
                 $caption = $message->getCaption();
 
+                // Check for spam in text messages
+                if ($messageText) {
+                    $this->logger->log("Checking message for spam in chat {$chatId} from user {$username}", "Spam Check", "webhook");
+
+                    // Check if the message is spam
+                    $isSpam = $this->antiSpamHandler->checkAndHandleSpam($messageText, $userId, $username, $chatId, $messageId);
+
+                    // If the message was handled as spam, skip further processing
+                    if ($isSpam) {
+                        $this->logger->log("Message from {$username} in chat {$chatId} was handled as spam, skipping further processing", "Spam Check", "webhook");
+                        return;
+                    }
+                }
+
                 if ($messageText || $photos) {
                     // Process and store text message (only if there are no photos)
                     if ($messageText && empty($photos)) {
@@ -96,19 +117,19 @@ class WebhookProcessor
                     // Process images if present
                     $formattedDescription = null;
                     if ($photos && !empty($photos)) {
-                        $formattedDescription = $this->processImage($message, $photos, $caption, $chatId, $timestamp, $username, $messageId);
+                        $formattedDescription = $this->processImage($photos, $caption, $this);
                     }
 
                     // Only process mentions for new messages, not edited ones
                     // Only process mentions for non-command messages
-                    if (!$isEditedMessage && 
-                        $messageText !== '/summary' && 
-                        !str_starts_with($messageText, '/mcp') && 
+                    if (!$isEditedMessage &&
+                        $messageText !== '/summary' &&
+                        !str_starts_with($messageText, '/mcp') &&
                         !str_starts_with($messageText, '/settings')) {
                         // Check if the message is a reply to a bot message
                         $isReplyToBot = false;
                         $replyToMessage = $message->getReplyToMessage();
-                        
+
                         if ($replyToMessage) {
                             $replyFrom = $replyToMessage->getFrom();
                             if ($replyFrom && $replyFrom->getUsername() === $this->botUsername) {
@@ -119,25 +140,8 @@ class WebhookProcessor
                                 );
                             }
                         }
-                        
-                        // Check if message contains bot mention or is a reply to bot
-                        $hasBotMention = strpos(strtolower($messageText ?: ($caption ?: '')), '@' . strtolower($this->botUsername)) !== false;
-                        
-                        // Also check for the bot's username without @ symbol (for more natural mentions)
-                        $hasNaturalMention = !$hasBotMention && strpos(strtolower($messageText ?: ($caption ?: '')), strtolower($this->botUsername)) !== false;
-                        
-                        if ($hasBotMention || $isReplyToBot || $hasNaturalMention) {
-                            // Log the type of mention detected
-                            if ($hasNaturalMention && !$hasBotMention && !$isReplyToBot) {
-                                $this->logger->log(
-                                    "Detected natural mention of bot in chat {$chatId} by {$username}",
-                                    'Natural Mention'
-                                );
-                            }
-                            
-                            // Check if bot mentions are enabled for this chat
-                            $this->processBotMention($chatId, $messageText ?: ($caption ?: ''), $username, $messageId, $photos, $formattedDescription ?? null, $isReplyToBot);
-                        }
+
+                        $this->processBotMention($chatId, $messageText ?: ($caption ?: ''), $username, $messageId, $photos, $formattedDescription ?? null, $isReplyToBot);
                     } else if ($isEditedMessage) {
                         // Log that we're skipping mention processing for edited message
                         $this->logger->log(
@@ -145,7 +149,17 @@ class WebhookProcessor
                             'Edited Message'
                         );
                     }
+                } else {
+                    $this->logger->log(
+                        'Skip processing empty message 1',
+                        'Mention'
+                    );
                 }
+            } else {
+                $this->logger->log(
+                    'Skip processing empty message 2',
+                    'Mention'
+                );
             }
 
             // Command handling - only for new messages, not edited ones
@@ -162,18 +176,21 @@ class WebhookProcessor
                     $this->logger->logWebhook("Received /summary command in chat {$chatId} ({$chatTitle}) from user {$fromUser}");
                     $this->commandHandler->handleSummaryCommand($chatId);
                 }
-                
+
                 // Handle /mcp command
                 if (str_starts_with($messageText, '/mcp')) {
                     // Extract the query part after the command
                     $query = trim(substr($messageText, 4));
 
                     $this->logger->logWebhook(
-                        "Received /mcp command in chat {$chatId} ({$chatTitle}) from user {$fromUser} with query: " . 
+                        "Received /mcp command in chat {$chatId} ({$chatTitle}) from user {$fromUser} with query: " .
                         substr($query, 0, 50) . (strlen($query) > 50 ? '...' : '')
                     );
 
-                    $this->commandHandler->handleMCPCommand($chatId, $query, $fromUser, $messageId);
+                    // Get the user ID for subscription checking
+                    $userId = $message->getFrom()->getId();
+
+                    $this->commandHandler->handleMCPCommand($chatId, $query, $fromUser, $messageId, $userId);
                 }
 
                 // Handle /settings command
@@ -182,11 +199,28 @@ class WebhookProcessor
                     $params = trim(substr($messageText, 9));
 
                     $this->logger->logWebhook(
-                        "Received /settings command in chat {$chatId} ({$chatTitle}) from user {$fromUser} with params: " . 
+                        "Received /settings command in chat {$chatId} ({$chatTitle}) from user {$fromUser} with params: " .
                         substr($params, 0, 50) . (strlen($params) > 50 ? '...' : '')
                     );
 
                     $this->commandHandler->handleSettingsCommand($chatId, $params, $fromUser, $messageId, $message);
+                }
+
+                // Handle /account command
+                if (str_starts_with($messageText, '/account')) {
+                    // Extract the account identifier part after the command
+                    $accountIdentifier = trim(substr($messageText, 8));
+
+                    $this->logger->logWebhook(
+                        "Received /account command in chat {$chatId} ({$chatTitle}) from user {$fromUser} with identifier: " .
+                        substr($accountIdentifier, 0, 10) . (strlen($accountIdentifier) > 10 ? '...' : '')
+                    );
+
+                    // Check if this is a private chat
+                    $isPrivateChat = $message->getChat()->isPrivateChat();
+                    $userId = $message->getFrom()->getId();
+
+                    $this->commandHandler->handleAccountCommand($chatId, $accountIdentifier, $userId, $messageId, $isPrivateChat);
                 }
             } else if ($message && $isEditedMessage) {
                 // Log that we're skipping command processing for edited message
@@ -227,13 +261,70 @@ class WebhookProcessor
      * @param int $messageId The message ID
      * @return string|null The formatted image description if successful
      */
-    private function processImage($message, $photos, ?string $caption, int $chatId, int $timestamp, string $username, int $messageId): ?string
+    private function processImage($photos, ?string $caption): ?string
     {
-        // This method would contain the image processing logic from the original Bot class
-        // For brevity, I'm not including the full implementation here
-        // The actual implementation would use AIService to generate image descriptions
-        
-        // Return the formatted description if successful
+        try {
+            // Get the largest photo (last in the array)
+            $largestPhoto = end($photos);
+
+            // Get the file ID from the PhotoSize object
+            $fileId = $largestPhoto->getFileId();
+
+            $this->logger->log("Downloading image with file ID: " . $fileId);
+
+            // Get the file path from Telegram
+            $fileResult = Request::getFile(['file_id' => $fileId]);
+
+            if ($fileResult->isOk()) {
+                $filePath = $fileResult->getResult()->getFilePath();
+
+                // Construct the full URL to the file
+                $imageUrl = 'https://api.telegram.org/file/bot' . $this->config['telegram_bot_token'] . '/' . $filePath;
+
+                // Create a temporary file to store the image
+                $tmpFile = tempnam(sys_get_temp_dir(), 'telegram_img_');
+
+                // Download the image to the temporary file
+                $imageData = file_get_contents($imageUrl);
+                if ($imageData !== false) {
+                    file_put_contents($tmpFile, $imageData);
+
+                    // Convert image to base64
+                    $base64Image = base64_encode($imageData);
+
+                    $this->logger->logError('Downloaded image successfully.', 'Webhook Image Download Success');
+
+                    // Generate description for the image using base64
+                    $imageDescription = $this->aiService->generateImageDescription($base64Image, true, $caption);
+
+                    // Clean up the temporary file
+                    @unlink($tmpFile);
+                } else {
+                    $this->logger->logError("Failed to download image from URL: " . $imageUrl);
+                    $imageDescription = null;
+                }
+
+                if ($imageDescription) {
+                    // Format the image description with caption if available
+                    $formattedDescription = "[IMAGE: " . $imageDescription . "]";
+
+                    // Add caption to the description if available
+                    if ($caption) {
+                        $formattedDescription = $caption . " " . $formattedDescription;
+                    }
+
+                    $this->logger->log("Stored image with description: " . $formattedDescription, 'Webhook Image Description');
+                    return $formattedDescription;
+                }
+            } else {
+                $this->logger->logError("Telegram API Error: " . $fileResult->getDescription(), "Webhook Error");
+                return '';
+            }
+        } catch (\Exception $e) {
+            $this->logger->logError("Error while processing image: " . $e->getMessage());
+            return '';
+        }
+
         return null;
     }
 
