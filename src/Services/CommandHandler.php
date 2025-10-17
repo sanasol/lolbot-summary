@@ -39,7 +39,7 @@ class CommandHandler
      * @param int $chatId The chat ID
      * @return void
      */
-    public function handleSummaryCommand(int $chatId): void
+    public function handleSummaryCommand(int $chatId, ?string $window = null, ?int $replyToMessageId = null): void
     {
         $this->logger->logCommand("Handling /summary command for chat {$chatId}", "summary");
         echo "Handling /summary command for chat {$chatId}\n";
@@ -63,18 +63,24 @@ class CommandHandler
             return;
         }
 
-        $messages = $this->messageStorage->getRecentMessages($chatId, 24);
+        // Determine time window
+        [$startTs, $endTs, $windowLabel] = $this->parseSummaryWindow($window);
+        $this->logger->logCommand("Using summary window {$windowLabel} (" . gmdate('c', $startTs) . " to " . gmdate('c', $endTs) . ") for chat {$chatId}", "summary");
+
+        // Fetch messages in the window
+        $messages = $this->messageStorage->getMessagesInRange($chatId, $startTs, $endTs);
         $messageCount = count($messages);
         $this->logger->logCommand("Retrieved {$messageCount} messages for chat {$chatId}", "summary");
 
         if (empty($messages)) {
             $this->logger->logCommand("No messages found to summarize for chat {$chatId}", "summary");
-//
-//            Request::sendMessage([
-//                'chat_id' => $chatId,
-//                'text' => 'No messages found in the last 24 hours to summarize\.',
-//                'parse_mode' => 'MarkdownV2'
-//            ]);
+            if ($replyToMessageId !== null) {
+                Request::sendMessage([
+                    'chat_id' => $chatId,
+                    'text' => "No messages found for the requested window: {$windowLabel} (UTC).",
+                    'reply_to_message_id' => $replyToMessageId
+                ]);
+            }
             return;
         }
 
@@ -106,7 +112,7 @@ class CommandHandler
             "summary"
         );
 
-        $summary = $this->aiService->generateChatSummary($messages, $chatId, $chatTitle, $chatUsername);
+        $summary = $this->aiService->generateChatSummary($messages, $chatId, $chatTitle, $chatUsername, $windowLabel);
 
         if ($summary) {
             $summaryLength = strlen($summary);
@@ -151,6 +157,50 @@ class CommandHandler
                     "Failed to send summary to chat {$chatId}: " . $sendResult->getDescription(),
                     "Command:summary"
                 );
+
+                // Fallback: send as plain text without HTML if parsing failed
+                try {
+                    $this->logger->logCommand("Attempting plain-text fallback for chat {$chatId}", "summary");
+
+                    $fallbackText = $this->stripHtmlToPlainText($summaryWithBlockquote);
+
+                    $fallbackSendResult = Request::sendMessage([
+                        'chat_id' => $chatId,
+                        'text' => $fallbackText,
+                        'disable_web_page_preview' => true,
+                    ]);
+
+                    if ($fallbackSendResult->isOk()) {
+                        $this->logger->logCommand("Plain-text fallback summary successfully sent to chat {$chatId}", "summary");
+
+                        // Try to pin the message sent via fallback
+                        try {
+                            $fallbackMessageId = $fallbackSendResult->getResult()->getMessageId();
+                            if ($fallbackMessageId) {
+                                $pinResult = $this->sender->pinChatMessage($chatId, $fallbackMessageId);
+                                if ($pinResult->isOk()) {
+                                    $this->logger->logCommand("Fallback summary message successfully pinned in chat {$chatId}", "summary");
+                                } else {
+                                    $this->logger->logError(
+                                        "Failed to pin fallback summary message in chat {$chatId}: " . $pinResult->getDescription(),
+                                        "Command:summary"
+                                    );
+                                }
+                            } else {
+                                $this->logger->logError("Cannot pin fallback message in chat {$chatId}: Invalid message ID", "Command:summary");
+                            }
+                        } catch (\Exception $e) {
+                            $this->logger->logError("Exception when pinning fallback message in chat {$chatId}", "Command:summary", $e);
+                        }
+                    } else {
+                        $this->logger->logError(
+                            "Fallback plain-text send also failed for chat {$chatId}: " . $fallbackSendResult->getDescription(),
+                            "Command:summary"
+                        );
+                    }
+                } catch (\Throwable $e) {
+                    $this->logger->logError("Exception during fallback send for chat {$chatId}: " . $e->getMessage(), "Command:summary", $e);
+                }
             }
         } else {
             $this->logger->logError("Failed to generate summary for chat {$chatId}", "Command:summary");
@@ -340,6 +390,12 @@ class CommandHandler
                 $this->setBotMentionsEnabled($chatId, $enabled, $messageId);
                 break;
 
+            case 'time':
+            case 'summary_time':
+                $hour = $parts[1] ?? '';
+                $this->setSummaryHour($chatId, $hour, $messageId);
+                break;
+
             case 'help':
             default:
                 $this->showSettingsHelp($chatId, $messageId);
@@ -389,9 +445,11 @@ class CommandHandler
         $summaryEnabled = $settings['summary_enabled'] ? '✅ Enabled' : '❌ Disabled';
         $mentionsEnabled = $settings['bot_mentions_enabled'] ? '✅ Enabled' : '❌ Disabled';
 
+        $summaryHourUtc = $settings['summary_hour_utc'] ?? 8;
         $message = "📊 *Current Settings*\n\n" .
             "🌐 *Language*: {$languageName}\n" .
             "📝 *Summary*: {$summaryEnabled}\n" .
+            "⏰ *Summary Time (UTC)*: {$summaryHourUtc}:00\n" .
             "🤖 *Bot Mentions*: {$mentionsEnabled}\n\n" .
             "Use `/settings help` to see available commands.";
 
@@ -427,8 +485,40 @@ class CommandHandler
             "  Available languages: {$languageList}\n" .
             "• `/settings summary [on/off]` - Enable/disable summaries\n" .
             "• `/settings mentions [on/off]` - Enable/disable bot mentions\n" .
+            "• `/settings time [0-23]` - Set daily summary hour (UTC). Default is 8.\n" .
             "• `/settings help` - Show this help message\n\n" .
             "Only group administrators can change settings.";
+
+        Request::sendMessage([
+            'chat_id' => $chatId,
+            'text' => $message,
+            'parse_mode' => 'Markdown',
+            'reply_to_message_id' => $messageId
+        ]);
+    }
+
+    /**
+     * Show general help with command overview and /summary time windows
+     *
+     * @param int $chatId The chat ID
+     * @param int $messageId Message ID to reply to
+     * @return void
+     */
+    public function handleHelpCommand(int $chatId, int $messageId): void
+    {
+        $message = "🆘 Help\n\n" .
+            "• `/summary [window]` — Generate a chat summary. If no window is provided, uses the last 24h.\n" .
+            "  Supported time windows (UTC):\n" .
+            "  • `Nh`, `Nm`, `Nd` — last N hours/minutes/days (e.g., `2h`, `30m`, `1d`)\n" .
+            "  • `today` — from 00:00 UTC today to now\n" .
+            "  • `yesterday` — full previous UTC day (00:00–23:59:59)\n" .
+            "  • `YYYY-MM-DD` — a specific UTC date (full day)\n" .
+            "  • `HH:MM-HH:MM` — a time range today in UTC (can cross midnight, e.g., `23:00-01:00`)\n" .
+            "  Note: maximum window is 7 days; longer ranges will be capped.\n\n" .
+            "Other commands:\n" .
+            "• `/settings` — Show or change group settings (admins only).\n" .
+            "• `/mcp [query]` — Ask the bot to answer using recent chat context.\n" .
+            "• `/account [token]` — Link your Statbate+ account in a private chat.\n";
 
         Request::sendMessage([
             'chat_id' => $chatId,
@@ -556,6 +646,64 @@ class CommandHandler
 
         $message = "{$emoji} Bot mentions are now *{$status}* for this chat.";
 
+        Request::sendMessage([
+            'chat_id' => $chatId,
+            'text' => $message,
+            'parse_mode' => 'Markdown',
+            'reply_to_message_id' => $messageId
+        ]);
+    }
+
+    /**
+     * Set daily summary hour (UTC) for a chat
+     *
+     * @param int $chatId The chat ID
+     * @param string $hour The hour string (0-23)
+     * @param int $messageId Message ID to reply to
+     * @return void
+     */
+    private function setSummaryHour(int $chatId, string $hour, int $messageId): void
+    {
+        if ($hour === '') {
+            $current = (int)$this->settingsService->getSetting($chatId, 'summary_hour_utc', 8);
+            $message = "⚠️ Please provide an hour between 0 and 23 (UTC).\nCurrent value: {$current}:00 UTC";
+            Request::sendMessage([
+                'chat_id' => $chatId,
+                'text' => $message,
+                'parse_mode' => 'Markdown',
+                'reply_to_message_id' => $messageId
+            ]);
+            return;
+        }
+
+        // Accept forms like "8" or "08"
+        if (!ctype_digit($hour)) {
+            $message = "⚠️ Invalid value. Use an integer hour between 0 and 23 (UTC). Example: `/settings time 8`";
+            Request::sendMessage([
+                'chat_id' => $chatId,
+                'text' => $message,
+                'parse_mode' => 'Markdown',
+                'reply_to_message_id' => $messageId
+            ]);
+            return;
+        }
+
+        $int = (int)$hour;
+        if ($int < 0 || $int > 23) {
+            $message = "⚠️ Invalid hour. Please use a value between 0 and 23 (UTC).";
+            Request::sendMessage([
+                'chat_id' => $chatId,
+                'text' => $message,
+                'parse_mode' => 'Markdown',
+                'reply_to_message_id' => $messageId
+            ]);
+            return;
+        }
+
+        $this->settingsService->updateSetting($chatId, 'summary_hour_utc', $int);
+
+        $padded = str_pad((string)$int, 2, '0', STR_PAD_LEFT);
+        $message = "✅ Daily summary time set to *{$padded}:00 UTC*.";
         Request::sendMessage([
             'chat_id' => $chatId,
             'text' => $message,
@@ -732,5 +880,158 @@ class CommandHandler
             'timeout' => 10,
             'connect_timeout' => 5,
         ]);
+    }
+
+    /**
+     * Parse summary window string into [startTs, endTs, label]. All times in UTC.
+     * Supported examples:
+     * - "2h", "30m", "1d"
+     * - "today", "yesterday"
+     * - "YYYY-MM-DD" (UTC day)
+     * - "HH:MM-HH:MM" (today, UTC)
+     * If invalid or empty, defaults to last 24h.
+     */
+    private function parseSummaryWindow(?string $window): array
+    {
+        $now = time();
+        $endTs = $now;
+        $label = 'last 24h';
+        $startTs = $endTs - 24 * 3600;
+
+        $w = trim((string)$window);
+        if ($w === '') {
+            return [$startTs, $endTs, $label];
+        }
+        $wLower = strtolower($w);
+
+        // Duration formats: Nh / Nm / Nd
+        if (preg_match('/^(\d{1,3})\s*([hmd])$/i', $wLower, $m)) {
+            $n = (int)$m[1];
+            $unit = strtolower($m[2]);
+            $seconds = $unit === 'h' ? $n * 3600 : ($unit === 'm' ? $n * 60 : $n * 86400);
+            $endTs = $now;
+            $startTs = $endTs - $seconds;
+            $label = "last {$n}{$unit}";
+            return $this->capWindow([$startTs, $endTs, $label]);
+        }
+
+        // today
+        if ($wLower === 'today') {
+            $y = (int)gmdate('Y', $now);
+            $m = (int)gmdate('m', $now);
+            $d = (int)gmdate('d', $now);
+            $startTs = gmmktime(0, 0, 0, $m, $d, $y);
+            $endTs = $now;
+            $label = 'today';
+            return [$startTs, $endTs, $label];
+        }
+
+        // yesterday
+        if ($wLower === 'yesterday') {
+            $y = (int)gmdate('Y', $now);
+            $m = (int)gmdate('m', $now);
+            $d = (int)gmdate('d', $now);
+            $todayStart = gmmktime(0, 0, 0, $m, $d, $y);
+            $startTs = $todayStart - 86400;
+            $endTs = $todayStart - 1;
+            $label = 'yesterday';
+            return [$startTs, $endTs, $label];
+        }
+
+        // Date format YYYY-MM-DD (UTC)
+        if (preg_match('/^(\d{4})-(\d{2})-(\d{2})$/', $wLower, $m)) {
+            $startTs = gmmktime(0, 0, 0, (int)$m[2], (int)$m[3], (int)$m[1]);
+            $endTs = $startTs + 86400 - 1;
+            $label = $wLower;
+            return [$startTs, $endTs, $label];
+        }
+
+        // Time range today: HH:MM-HH:MM (UTC)
+        if (preg_match('/^(\d{2}):(\d{2})\s*-\s*(\d{2}):(\d{2})$/', $wLower, $m)) {
+            $y = (int)gmdate('Y', $now);
+            $mon = (int)gmdate('m', $now);
+            $d = (int)gmdate('d', $now);
+            $startTs = gmmktime((int)$m[1], (int)$m[2], 0, $mon, $d, $y);
+            $endTs = gmmktime((int)$m[3], (int)$m[4], 59, $mon, $d, $y);
+            if ($endTs < $startTs) {
+                // Assume crossing midnight -> add a day to end
+                $endTs += 86400;
+            }
+            $label = $wLower . ' today';
+            return $this->capWindow([$startTs, $endTs, $label]);
+        }
+
+        // Fallback: return default last 24h
+        return [$startTs, $endTs, $label];
+    }
+
+    /**
+     * Ensure the window is not larger than 7 days.
+     * If it is, cap to last 7 days ending at endTs and annotate label.
+     */
+    private function capWindow(array $triple): array
+    {
+        [$startTs, $endTs, $label] = $triple;
+        $max = 7 * 86400;
+        if (($endTs - $startTs) > $max) {
+            $startTs = $endTs - $max;
+            $label .= ' (capped to 7d)';
+        }
+        return [$startTs, $endTs, $label];
+    }
+
+    /**
+     * Convert possibly-HTML summary into plain text suitable for Telegram without parse_mode
+     */
+    private function stripHtmlToPlainText(string $html): string
+    {
+        // Replace common HTML structures with text-friendly equivalents before stripping tags
+        $patterns = [
+            '/<\s*br\s*\/?\s*>/i',
+            '/<\s*\/p\s*>/i',
+            '/<\s*p\s*>/i',
+            '/<\s*li\s*>/i',
+            '/<\s*\/li\s*>/i',
+            '/<\s*\/ul\s*>/i',
+            '/<\s*ul\s*>/i',
+            '/<\s*\/ol\s*>/i',
+            '/<\s*ol\s*>/i',
+            '/<\s*blockquote[^>]*>/i',
+            '/<\s*\/blockquote\s*>/i',
+        ];
+        $replacements = [
+            "\n",
+            "\n\n",
+            '',
+            "• ",
+            "\n",
+            "\n",
+            "\n",
+            "\n",
+            "\n",
+            '',
+            "\n",
+        ];
+
+        $text = preg_replace($patterns, $replacements, $html);
+        if ($text === null) {
+            $text = $html; // fallback if preg_replace fails
+        }
+
+        // Strip any remaining tags and decode entities
+        $text = strip_tags($text);
+        $text = html_entity_decode($text, ENT_QUOTES | ENT_HTML5, 'UTF-8');
+
+        // Normalize whitespace/newlines
+        $text = preg_replace("/\r\n|\r/", "\n", $text);
+        $text = preg_replace("/\n{3,}/", "\n\n", $text);
+        $text = trim($text);
+
+        // Ensure the hashtag is present at the end for discoverability
+        if ($text !== '' && !str_contains($text, '#dailySummary')) {
+            $text .= "\n\n#dailySummary";
+        }
+
+        return $text;
     }
 }

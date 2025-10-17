@@ -53,5 +53,5 @@ interface AIServiceInterface
      * @param string|null $chatUsername The chat username (optional)
      * @return string|null The generated summary or null if generation failed
      */
-    public function generateChatSummary(array $messages, ?int $chatId = null, ?string $chatTitle = null, ?string $chatUsername = null): ?string;
+    public function generateChatSummary(array $messages, ?int $chatId = null, ?string $chatTitle = null, ?string $chatUsername = null, ?string $windowLabel = null): ?string;
 }

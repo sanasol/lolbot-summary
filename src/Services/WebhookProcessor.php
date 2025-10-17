@@ -115,7 +115,7 @@ class WebhookProcessor
                     }
 
                     // Process images if present
-                    $formattedDescription = null;
+                    $formattedDescription = [];
                     if ($photos && !empty($photos)) {
                         $formattedDescription = $this->processImage($photos, $caption, $this);
                     }
@@ -123,7 +123,7 @@ class WebhookProcessor
                     // Only process mentions for new messages, not edited ones
                     // Only process mentions for non-command messages
                     if (!$isEditedMessage &&
-                        $messageText !== '/summary' &&
+                        !str_starts_with($messageText, '/summary') &&
                         !str_starts_with($messageText, '/mcp') &&
                         !str_starts_with($messageText, '/settings')) {
                         // Check if the message is a reply to a bot message
@@ -172,9 +172,14 @@ class WebhookProcessor
                 $messageText = $message->getText(false);
 
                 // Handle /summary command
-                if ($messageText === '/summary') {
-                    $this->logger->logWebhook("Received /summary command in chat {$chatId} ({$chatTitle}) from user {$fromUser}");
-                    $this->commandHandler->handleSummaryCommand($chatId);
+                if (str_starts_with($messageText, '/summary')) {
+                    // Extract optional time window parameters after the command
+                    $params = trim(substr($messageText, 8));
+                    $this->logger->logWebhook(
+                        "Received /summary command in chat {$chatId} ({$chatTitle}) from user {$fromUser} with params: " .
+                        (strlen($params) ? substr($params, 0, 50) . (strlen($params) > 50 ? '...' : '') : '[none]')
+                    );
+                    $this->commandHandler->handleSummaryCommand($chatId, $params, $messageId);
                 }
 
                 // Handle /mcp command
@@ -204,6 +209,14 @@ class WebhookProcessor
                     );
 
                     $this->commandHandler->handleSettingsCommand($chatId, $params, $fromUser, $messageId, $message);
+                }
+
+                // Handle /help command
+                if (str_starts_with($messageText, '/help')) {
+                    $this->logger->logWebhook(
+                        "Received /help command in chat {$chatId} ({$chatTitle}) from user {$fromUser}"
+                    );
+                    $this->commandHandler->handleHelpCommand($chatId, $messageId);
                 }
 
                 // Handle /account command
@@ -261,7 +274,7 @@ class WebhookProcessor
      * @param int $messageId The message ID
      * @return string|null The formatted image description if successful
      */
-    private function processImage($photos, ?string $caption): ?string
+    private function processImage($photos, ?string $caption): ?array
     {
         try {
             // Get the largest photo (last in the array)
@@ -314,18 +327,18 @@ class WebhookProcessor
                     }
 
                     $this->logger->log("Stored image with description: " . $formattedDescription, 'Webhook Image Description');
-                    return $formattedDescription;
+                    return [$formattedDescription, $imageUrl];
                 }
             } else {
                 $this->logger->logError("Telegram API Error: " . $fileResult->getDescription(), "Webhook Error");
-                return '';
+                return ['', ''];
             }
         } catch (\Exception $e) {
             $this->logger->logError("Error while processing image: " . $e->getMessage());
-            return '';
+            return ['', ''];
         }
 
-        return null;
+        return [null, null];
     }
 
     /**
@@ -339,7 +352,7 @@ class WebhookProcessor
      * @param string|null $imageDescription The image description if available
      * @param bool $isReplyToBot Whether this message is a reply to a bot message
      */
-    private function processBotMention(int $chatId, string $textToUse, string $username, int $messageId, $photos = null, ?string $imageDescription = null, bool $isReplyToBot = false): void
+    private function processBotMention(int $chatId, string $textToUse, string $username, int $messageId, $photos = null, ?array $imageDescription = null, bool $isReplyToBot = false): void
     {
         $this->mentionHandler->handleBotMention($chatId, $textToUse, $username, $messageId, $photos, $imageDescription, $isReplyToBot);
     }

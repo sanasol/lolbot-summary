@@ -154,8 +154,8 @@ class MCPResponseGenerator
             // Log request
             $this->logger->log("Generating MCP response for message: " . substr($messageText, 0, 50) . (strlen($messageText) > 50 ? '...' : ''), "MCP Response", "webhook");
 
-            // Create a user message with the input
-            $userMessage = new \NeuronAI\Chat\Messages\UserMessage($messageText);
+            // Create a user message with the input (compatible with both enum and string role implementations)
+            $userMessage = new \NeuronAI\Chat\Messages\Message(\NeuronAI\Chat\Enums\MessageRole::USER, $messageText);
 
             $inspector = new Inspector(
                 (new Configuration($this->config['inspector_ingestion_key']))

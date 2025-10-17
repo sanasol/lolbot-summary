@@ -13,6 +13,7 @@ class SettingsService
         'language' => 'en',  // Default language for summaries and bot responses
         'summary_enabled' => true,  // Whether summaries are enabled for this group
         'bot_mentions_enabled' => true,  // Whether bot should respond to mentions
+        'summary_hour_utc' => 8, // Default summary sending hour in UTC (0-23)
     ];
 
     /**
@@ -189,6 +190,19 @@ class SettingsService
             case 'summary_enabled':
             case 'bot_mentions_enabled':
                 return is_bool($value) || (is_string($value) && in_array(strtolower($value), ['true', 'false', '1', '0']));
+            case 'summary_hour_utc':
+                if (is_numeric($value)) {
+                    $int = (int)$value;
+                    return $int >= 0 && $int <= 23;
+                }
+                if (is_string($value)) {
+                    // allow formats like "08" or "8"
+                    if (ctype_digit($value)) {
+                        $int = (int)$value;
+                        return $int >= 0 && $int <= 23;
+                    }
+                }
+                return false;
             default:
                 return false;
         }
@@ -207,9 +221,14 @@ class SettingsService
             case 'summary_enabled':
             case 'bot_mentions_enabled':
                 if (is_string($value)) {
-                    return in_array(strtolower($value), ['true', '1']);
+                    return in_array(strtolower($value), ['true', '1', 'on']);
                 }
                 return (bool)$value;
+            case 'summary_hour_utc':
+                $int = (int)$value;
+                if ($int < 0) $int = 0;
+                if ($int > 23) $int = 23;
+                return $int;
             default:
                 return $value;
         }

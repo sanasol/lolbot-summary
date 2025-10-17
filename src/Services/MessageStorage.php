@@ -86,6 +86,35 @@ class MessageStorage
     }
 
     /**
+     * Get messages in a specific time range [start, end]
+     *
+     * @param int $chatId
+     * @param int $startTs inclusive UNIX timestamp
+     * @param int $endTs inclusive UNIX timestamp
+     * @return array
+     */
+    public function getMessagesInRange(int $chatId, int $startTs, int $endTs): array
+    {
+        // Make sure we have the latest messages from file
+        $this->loadMessagesFromFile($chatId);
+
+        $messages = [];
+        if ($startTs > $endTs) {
+            [$startTs, $endTs] = [$endTs, $startTs];
+        }
+
+        if (isset($this->chatMessages[$chatId])) {
+            ksort($this->chatMessages[$chatId]);
+            foreach ($this->chatMessages[$chatId] as $timestamp => $message) {
+                if ($timestamp >= $startTs && $timestamp <= $endTs) {
+                    $messages[] = $message;
+                }
+            }
+        }
+        return $messages;
+    }
+
+    /**
      * Get recent chat messages for context
      *
      * @param int $chatId The chat ID
@@ -129,7 +158,7 @@ class MessageStorage
      */
     public function cleanupOldMessages(): void
     {
-        $cutoff = time() - (25 * 3600); // Keep slightly more than 24 hours
+        $cutoff = time() - (24*7 * 3600); // Keep slightly more than 24 hours
         $modified = false;
 
         foreach ($this->chatMessages as $chatId => &$messages) {

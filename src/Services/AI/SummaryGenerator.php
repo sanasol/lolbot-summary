@@ -45,7 +45,7 @@ class SummaryGenerator
      * @param string|null $chatUsername The chat username (optional)
      * @return string|null The generated summary or null if generation failed
      */
-    public function generate(array $messages, ?int $chatId = null, ?string $chatTitle = null, ?string $chatUsername = null): ?string
+    public function generate(array $messages, ?int $chatId = null, ?string $chatTitle = null, ?string $chatUsername = null, ?string $windowLabel = null): ?string
     {
         // Create a chat identifier for logging
         $chatIdentifier = $chatId ? "chat $chatId" : "unknown chat";
@@ -88,12 +88,15 @@ class SummaryGenerator
         // Log the language being used
         $this->logger->log("Using language setting: {$language} for {$chatIdentifier}", "Summary", "webhook");
         $this->logger->log("Using language setting: {$language} for {$chatIdentifier}", "Summary", "summary");
+        if ($windowLabel !== null && $windowLabel !== '') {
+            $this->logger->log("Using time window: {$windowLabel} (UTC) for {$chatIdentifier}", "Summary", "summary");
+        }
 
         // Build the prompt
-        $prompt = $this->promptBuilder->buildSummaryPrompt($messages, $language, $chatInfo);
+        $prompt = $this->promptBuilder->buildSummaryPrompt($messages, $language, $chatInfo, $windowLabel);
 
         // Build the system prompt
-        $systemPrompt = $this->promptBuilder->buildSummarySystemPrompt($language);
+        $systemPrompt = $this->promptBuilder->buildSummarySystemPrompt($language, $windowLabel);
 
         try {
             // Log API request

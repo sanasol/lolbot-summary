@@ -2,10 +2,12 @@
 
     namespace App\Providers;
 
+    use GuzzleHttp\Promise\PromiseInterface;
     use NeuronAI\Chat\Messages\Message;
     use GuzzleHttp\Client;
+    use NeuronAI\Exceptions\ProviderException;
     use NeuronAI\Providers\AIProviderInterface;
-    use NeuronAI\Providers\HandleClient;
+    use NeuronAI\Providers\HasGuzzleClient;
     use NeuronAI\Providers\HandleWithTools;
     use NeuronAI\Chat\Messages\ToolCallMessage;
     use NeuronAI\Providers\MessageMapperInterface;
@@ -18,7 +20,8 @@
 
     class OpenRouterAi implements AIProviderInterface
     {
-        use HandleClient;
+        use HasGuzzleClient;
+        use HandleChat;
         use HandleWithTools;
         use HandleChat;
         use HandleStream;
@@ -128,5 +131,29 @@
                 $this->messageMapper = new MessageMapper();
             }
             return $this->messageMapper;
+        }
+
+
+        /**
+         * @param array<string, mixed> $message
+         * @throws ProviderException
+         */
+        protected function createToolCallMessage(array $message): Message
+        {
+            $tools = \array_map(
+                fn (array $item): ToolInterface => $this->findTool($item['function']['name'])
+                    ->setInputs(
+                        \json_decode((string) $item['function']['arguments'], true)
+                    )
+                    ->setCallId($item['id']),
+                $message['tool_calls']
+            );
+
+            $result = new ToolCallMessage(
+                $message['content'],
+                $tools
+            );
+
+            return $result->addMetadata('tool_calls', $message['tool_calls']);
         }
     }

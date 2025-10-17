@@ -10,10 +10,10 @@ use App\Services\SettingsService;
  */
 class AIService implements AIServiceInterface
 {
+    private const PUBLIC_IMAGES_BASE_URL = 'https://sum.statbate.com/src/images/';
     private array $config;
     private ?SettingsService $settingsService;
     private LoggerService $logger;
-
     private MCPResponseGenerator $mcpGenerator;
     private MentionResponseGenerator $mentionGenerator;
     private ImageProcessor $imageProcessor;
@@ -93,31 +93,42 @@ class AIService implements AIServiceInterface
     public function generateMentionResponse(string $messageText, string $username, string $chatContext = '', ?string $inputImageUrl = null, bool $isBase64 = false, int $chatId = 0, bool $isReplyToBot = false): ?array
     {
         // Check if this is an image generation request
-//        if ($this->imageProcessor->isImageGenerationRequest($messageText, $inputImageUrl)) {
-//            // Generate image
-//            $imageResult = $this->imageProcessor->generateImage($messageText, $inputImageUrl);
-//
-//            if ($imageResult) {
-//                // Check if we got an image URL
-//                if ($imageResult['url']) {
-//                    return [
-//                        'type' => 'image',
-//                        'image_url' => $imageResult['url'],
-//                        'content' => $imageResult['text_response'] ?? null,
-//                        'prompt' => $imageResult['prompt'],
-//                        'revised_prompt' => $imageResult['revised_prompt']
-//                    ];
-//                }
-//                // If we only got a text response (no image), return it as a text response
-//                elseif (isset($imageResult['text_response'])) {
-//                    return [
-//                        'type' => 'text',
-//                        'content' => $imageResult['text_response'],
-//                        'image_url' => null
-//                    ];
-//                }
-//            }
-//        }
+        if ($this->imageProcessor->isImageGenerationRequest($messageText, $inputImageUrl)) {
+            // Generate image
+            $imageResult = $this->imageProcessor->generateImage($messageText, $inputImageUrl);
+
+            if ($imageResult) {
+                // Check if we got an image URL
+                if ($imageResult['url']) {
+                    // If URL is a data URI (base64), save to file and replace with public URL
+                    $finalUrl = $imageResult['url'];
+                    if (is_string($finalUrl) && str_starts_with($finalUrl, 'data:image/')) {
+                        try {
+                            $this->logger->log("Detected data URI image, saving to file", "Image Generation", "webhook");
+                            $finalUrl = $this->saveDataUriImage($finalUrl);
+                            $this->logger->log("Saved image and replaced URL: " . $finalUrl, "Image Generation", "webhook");
+                        } catch (\Throwable $e) {
+                            $this->logger->log("Failed to save data URI image: " . $e->getMessage(), "Image Generation", "webhook", true);
+                        }
+                    }
+                    return [
+                        'type' => 'image',
+                        'image_url' => $finalUrl,
+                        'content' => $imageResult['text_response'] ?? null,
+                        'prompt' => $imageResult['prompt'],
+                        'revised_prompt' => $imageResult['revised_prompt']
+                    ];
+                }
+                // If we only got a text response (no image), return it as a text response
+                elseif (isset($imageResult['text_response'])) {
+                    return [
+                        'type' => 'text',
+                        'content' => $imageResult['text_response'],
+                        'image_url' => null
+                    ];
+                }
+            }
+        }
 
         // If not an image request or image generation failed, generate a text response
         return $this->mentionGenerator->generate($messageText, $username, $chatContext, $inputImageUrl, $isBase64, $chatId, $isReplyToBot);
@@ -145,8 +156,43 @@ class AIService implements AIServiceInterface
      * @param string|null $chatUsername The chat username (optional)
      * @return string|null The generated summary or null if generation failed
      */
-    public function generateChatSummary(array $messages, ?int $chatId = null, ?string $chatTitle = null, ?string $chatUsername = null): ?string
+    public function generateChatSummary(array $messages, ?int $chatId = null, ?string $chatTitle = null, ?string $chatUsername = null, ?string $windowLabel = null): ?string
     {
-        return $this->summaryGenerator->generate($messages, $chatId, $chatTitle, $chatUsername);
+        return $this->summaryGenerator->generate($messages, $chatId, $chatTitle, $chatUsername, $windowLabel);
+    }
+
+    /**
+     * Save a data URI image to src/images and return the public URL.
+     */
+    private function saveDataUriImage(string $dataUri): string
+    {
+        // Expected format: data:image/<ext>;base64,<data>
+        if (!preg_match('#^data:image/(png|jpeg|jpg|gif|webp);base64,#i', $dataUri, $m)) {
+            throw new \RuntimeException('Unsupported data URI format');
+        }
+        $ext = strtolower($m[1]);
+        if ($ext === 'jpeg') { $ext = 'jpg'; }
+
+        $base64 = substr($dataUri, strpos($dataUri, ',') + 1);
+        $binary = base64_decode($base64, true);
+        if ($binary === false) {
+            throw new \RuntimeException('Failed to decode base64 image');
+        }
+
+        $dir = __DIR__ . '/../../images'; // points to src/images
+        if (!is_dir($dir)) {
+            if (!mkdir($dir, 0775, true) && !is_dir($dir)) {
+                throw new \RuntimeException('Failed to create images directory');
+            }
+        }
+
+        $filename = 'img_' . date('Ymd_His') . '_' . bin2hex(random_bytes(4)) . '.' . $ext;
+        $path = $dir . '/' . $filename;
+        if (file_put_contents($path, $binary) === false) {
+            throw new \RuntimeException('Failed to write image file');
+        }
+
+        // Return public URL
+        return self::PUBLIC_IMAGES_BASE_URL . $filename;
     }
 }

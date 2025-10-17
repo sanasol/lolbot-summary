@@ -3,8 +3,8 @@ namespace App\Services;
 
 use App\Providers\OpenRouterAi;
 use NeuronAI\Agent;
-use NeuronAI\SystemPrompt;
 use NeuronAI\Providers\AIProviderInterface;
+use NeuronAI\Tools\PropertyType;
 use NeuronAI\Tools\Tool;
 use NeuronAI\Tools\ToolProperty;
 use ClickHouseDB\Client as ClickHouseClient;
@@ -291,10 +291,10 @@ class ClickhouseAgent extends Agent
             5. DONT return any data before this date ".date('Y-m-d', strtotime('-1 month'))."";
         }
 
-        return new SystemPrompt(
-            background: ["You are an AI Agent specialized in writing summaries for data from database.
-            Current time: ".date('H:i:s').".
-            Current date: ".date('Y-m-d').".
+        $prompt = "You are an AI Agent specialized in writing summaries for data from database.
+            Answer in English always if user not asked you in different language.
+            Current time: " . date('H:i:s') . ".
+            Current date: " . date('Y-m-d') . ".
             Database is clickhouse version 24.10.2.80
             database definition for clickhouse: " . self::$config['clickhouse_db_definition'] . "
             logs_v2 table available but for requests not more than 1 day
@@ -321,9 +321,9 @@ class ClickhouseAgent extends Agent
                 Include any relevant details that may be useful for understanding the content.
                 Include detailed information about what queries made to DB with all important notes, dont report raw queries, but report what tables used and what conditions used
 
-               Use html formatting for final result, dont use html tables
-"]
-        );
+               Use html formatting for final result, dont use html tables";
+
+        return $prompt;
     }
 
     protected function tools(): array
@@ -335,7 +335,7 @@ class ClickhouseAgent extends Agent
             )->addProperty(
                 new ToolProperty(
                     name: 'test',
-                    type: 'string',
+                    type: PropertyType::STRING,
                     description: 'test name',
                     required: false
                 )
@@ -367,14 +367,14 @@ class ClickhouseAgent extends Agent
             )->addProperty(
                 new ToolProperty(
                     name: 'database',
-                    type: 'string',
+                    type: PropertyType::STRING,
                     description: 'Database name',
                     required: true
                 )
             )->addProperty(
                 new ToolProperty(
                     name: 'like',
-                    type: 'string',
+                    type: PropertyType::STRING,
                     description: 'Filter tables by pattern',
                     required: false
                 )
@@ -480,7 +480,7 @@ class ClickhouseAgent extends Agent
             )->addProperty(
                 new ToolProperty(
                     name: 'query',
-                    type: 'string',
+                    type: PropertyType::STRING,
                     description: 'Clickhouse SELECT query to run.',
                     required: true
                 )

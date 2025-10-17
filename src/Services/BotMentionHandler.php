@@ -39,7 +39,7 @@ class BotMentionHandler
      * @param bool $isReplyToBot Whether this message is a reply to a bot message
      * @return bool Whether the mention was handled successfully
      */
-    public function handleBotMention(int $chatId, string $messageText, string $username, int $replyToMessageId, $photos = null, ?string $imageDescription = null, bool $isReplyToBot = false): bool
+    public function handleBotMention(int $chatId, string $messageText, string $username, int $replyToMessageId, $photos = null, ?array $imageDescription = null, bool $isReplyToBot = false): bool
     {
         // Check if bot mentions are enabled for this chat
         $mentionsEnabled = $this->settingsService->getSetting($chatId, 'bot_mentions_enabled', true);
@@ -64,13 +64,14 @@ class BotMentionHandler
         // If we already have an image description from the caller, use it
         $inputImageUrl = null;
         if ($imageDescription) {
-            $this->logger->logBotMention("Using provided image description: " . $imageDescription);
+            $this->logger->logBotMention("Using provided image description: " . $imageDescription[0]);
 
+            $inputImageUrl = $imageDescription[1];
             // Add image description to the message text for better context
             if (!empty($messageText)) {
-                $messageText .= "\n\n" . $imageDescription;
+                $messageText .= "\n\n" . $imageDescription[0];
             } else {
-                $messageText = $imageDescription;
+                $messageText = $imageDescription[0];
             }
         }
 
@@ -190,8 +191,8 @@ class BotMentionHandler
      */
     private function generateMentionResponse(string $messageText, string $username, string $chatContext = '', ?string $inputImageUrl = null, int $chatId = 0, bool $isReplyToBot = false): ?array
     {
-        // If inputImageUrl is provided, it's a base64-encoded image
-        $isBase64 = $inputImageUrl !== null;
+        // Determine if the provided image is a base64 data URI
+        $isBase64 = is_string($inputImageUrl) && str_starts_with($inputImageUrl, 'data:image/');
         return $this->aiService->generateMentionResponse($messageText, $username, $chatContext, $inputImageUrl, $isBase64, $chatId, $isReplyToBot);
     }
 }

@@ -96,13 +96,18 @@ class PromptBuilder
      * @param string|null $chatInfo Optional chat information
      * @return string The built prompt
      */
-    public function buildSummaryPrompt(array $messages, string $language, ?string $chatInfo = null): string
+    public function buildSummaryPrompt(array $messages, string $language, ?string $chatInfo = null, ?string $windowLabel = null): string
     {
         $languageInstruction = ($language === 'ru')
             ? "Generate the summary in Russian language."
             : "Generate the summary in English language.";
 
-        $prompt = "Summarize the following conversation that happened in a Telegram group chat over the last 24 hours. {$languageInstruction} Keep it concise and capture the main topics. Make statistics of most active users: messages sent, symbol usage etc. Show total sent words/symbols stats and approximate time used to write it(i.e. time spent in chat instead of work haha)\n\n";
+        $windowInstruction = '';
+        if ($windowLabel !== null && $windowLabel !== '') {
+            $windowInstruction = " The time window (UTC) for this summary is: {$windowLabel}. Only include and analyze content from this period.";
+        }
+
+        $prompt = "Summarize the following conversation from a Telegram group chat. {$languageInstruction}{$windowInstruction} Keep it concise and capture the main topics. Make statistics of most active users: messages sent, symbol usage etc. Show total sent words/symbols stats and approximate time used to write it(i.e. time spent in chat instead of work haha)\n\n";
 
         if (!empty($chatInfo)) {
             $prompt .= "Chat Information:\n$chatInfo\n";
@@ -119,13 +124,18 @@ class PromptBuilder
      * @param string $language The language to use (e.g., 'en', 'ru')
      * @return string The built system prompt
      */
-    public function buildSummarySystemPrompt(string $language): string
+    public function buildSummarySystemPrompt(string $language, ?string $windowLabel = null): string
     {
         $languageInstruction = ($language === 'ru')
             ? "Generate the summary in Russian language."
             : "Generate the summary in English language.";
 
-        return 'You are a helpful assistant that summarizes Telegram group chats. ' . $languageInstruction . ' Keep it concise and capture the main topics. Make list of main topics with short description and links to messages
+        $windowInstruction = '';
+        if ($windowLabel !== null && $windowLabel !== '') {
+            $windowInstruction = " The time window (UTC) for this summary is: {$windowLabel}. Only include and analyze content from this period.";
+        }
+
+        return 'You are a helpful assistant that summarizes Telegram group chats. ' . $languageInstruction . $windowInstruction . ' Keep it concise and capture the main topics. Make list of main topics with short description and links to messages
 
 If Chat Username is provided, create links to messages using the format: https://t.me/[username]/[message_id] where [username] is the Chat Username without @ and [message_id] is a message ID you can reference from the conversation.
 

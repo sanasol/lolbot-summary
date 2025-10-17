@@ -238,23 +238,26 @@ class Bot
         }
         $this->lastSummaryCheckTime = $currentTime;
 
-        // When should the summary be sent? e.g., at 8:00 AM server time
-        $summaryHour = 8; // 8 AM
-        $currentHour = (int)date('G'); // 24-hour format
+        // Use UTC hour for scheduling
+        $currentHourUtc = (int)gmdate('G'); // 0-23 UTC
 
-        // Check if it's the summary hour and if we haven't sent one today for relevant chats
-        if ($currentHour === $summaryHour) {
-            echo "Checking chats for daily summary...\n";
-            $this->triggerCleanup(); // Clean up very old messages before summarizing
+        echo "Checking chats for daily summary (UTC hour={$currentHourUtc})...\n";
+        $this->triggerCleanup(); // Clean up very old messages before summarizing
 
-            foreach ($this->messageStorage->getAllChatIds() as $chatId) {
-                 // Add logic here to track if a summary was already sent today for this chat
-                 // This could involve storing the last summary timestamp per chat (in memory or file/DB)
-                 if ($this->shouldSendDailySummary($chatId, $currentTime)) {
-                     echo "Sending daily summary to chat {$chatId}...\n";
-                     $this->commandHandler->handleSummaryCommand($chatId); // Reuse the command logic
-                     $this->markDailySummarySent($chatId, $currentTime); // Mark as sent
-                 }
+        foreach ($this->messageStorage->getAllChatIds() as $chatId) {
+            // Respect per-group setting: summary enabled and hour
+            $summaryEnabled = (bool)$this->settingsService->getSetting($chatId, 'summary_enabled', true);
+            if (!$summaryEnabled) {
+                continue;
+            }
+
+            $summaryHour = (int)$this->settingsService->getSetting($chatId, 'summary_hour_utc', 8);
+
+            // If it's the group's configured hour and we haven't sent one in the last ~day
+            if ($currentHourUtc === $summaryHour && $this->shouldSendDailySummary($chatId, $currentTime)) {
+                echo "Sending daily summary to chat {$chatId} at UTC hour {$summaryHour}...\n";
+                $this->commandHandler->handleSummaryCommand($chatId); // Reuse the command logic
+                $this->markDailySummarySent($chatId, $currentTime); // Mark as sent
             }
         }
     }

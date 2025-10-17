@@ -21,28 +21,32 @@ if (!file_exists($configPath)) {
 }
 $config = require $configPath;
 
+// Create a user message with the input (compatible with both enum and string role implementations)
+$userMessage = new \NeuronAI\Chat\Messages\Message(\NeuronAI\Chat\Enums\MessageRole::USER, 'hello');
 
-// Create a user message with the input
-//$userMessage = new \NeuronAI\Chat\Messages\UserMessage("User sanasol says: hi");
-//
-//$inspector = new Inspector(
-//    (new Configuration($config['inspector_ingestion_key']))
-//        ->setTransport('curl')
-//);
-//
-//// Initialize the ClickhouseAgent
-//$agent = \App\Services\ClickhouseAgent::make($config)
-//    ->observe(
-//        new AgentMonitoring($inspector)
-//    );
-//
-//// Get response from the agent
-//$response = $agent->chat($userMessage);
-//$content = $response->getContent();
-//$usage = $response->getUsage();
-//
-//var_dump($usage);
-//var_dump($content);
+$inspector = new Inspector(
+    (new Configuration($config['inspector_ingestion_key']))
+        ->setTransport('curl')
+);
+
+// Initialize the ClickhouseAgent
+$agent = \App\Services\ClickhouseAgent::make($config, false)
+    ->observe(
+        new AgentMonitoring($inspector)
+    );
+
+// Log that we're sending the message to the agent
+
+// Get response from the agent
+$response = $agent->chat($userMessage);
+$inspector->flush();
+$content = $response->getContent();
+$usage = $response->getUsage();
+
+var_dump($usage);
+var_dump($content);
+
+die();
 //
 //$provider = new \NeuronAI\RAG\Embeddings\VoyageEmbeddingsProvider(
 //    key: 'pa-dwCoxfN7QcW0n57a7ND9vuSY-yrSafF3bEjfqmOh01d',
