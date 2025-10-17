@@ -9,18 +9,26 @@ return [
     'xai_api_key' => getenv('XAI_API_KEY') ?: 'YOUR_XAI_API_KEY',
     'openrouter_key' => getenv('OPENROUTER_KEY') ?: 'YOUR_OPENROUTER_KEY',
 
-    // Optional: Specify the directory to store chat logs
+    'admin_chat_id' => '157056398',
+     // Optional: Specify the directory to store chat logs
     'log_path' => __DIR__ . '/../data',
 
     // OpenRouter API details
     'openrouter_api_url' => 'https://openrouter.ai/api/v1/chat/completions',
     'openrouter_summary_model' => 'x-ai/grok-3-beta', // Or choose another suitable model
-    'openrouter_chat_model' => 'x-ai/grok-3-beta', // Or choose another suitable model
-    'openrouter_vision_model' => 'x-ai/grok-2-vision-1212', // Or choose another suitable model
-    'openrouter_image_model' => 'google/gemini-2.5-pro-exp-03-25:free', // Or choose another suitable model
+    'openrouter_chat_model' => 'google/gemini-2.5-flash', // Or choose another suitable model
+    'openrouter_vision_model' => 'openai/o4-mini-high', // Or choose another suitable model
+    'openrouter_image_model' => 'google/gemini-2.5-flash-image-preview', // Or choose another suitable model
+
+    // OpenRouter provider configuration for ClickhouseAgent
+//    'openrouter_tool_model' => getenv('OPENROUTER_MODEL') ?: 'google/gemini-2.5-flash-preview:thinking', // Default to Claude 3.5 Sonnet
+    'openrouter_tool_model' => getenv('OPENROUTER_MODEL') ?: 'google/gemini-2.5-pro', // Default to Claude 3.5 Sonnet
+//    'openrouter_tool_model' => getenv('OPENROUTER_MODEL') ?: 'moonshotai/kimi-k2', // Default to Claude 3.5 Sonnet
+//    'openrouter_tool_model' => getenv('OPENROUTER_MODEL') ?: 'anthropic/claude-sonnet-4', // Default to Claude 3.5 Sonnet
+    'inspector_ingestion_key' => getenv('INSPECTOR_INGESTION_KEY') ?: 'APIKEY', // Default to Claude 3.5 Sonnet
 
     // Webhook configuration
-    'webhook_url' => getenv('WEBHOOK_URL') ?: '', // Set this to your webhook URL or use environment variable
+    'webhook_url' => getenv('WEBHOOK_URL') ?: 'https://site.com/src/webhook.php', // Set this to your webhook URL or use environment variable
 
     // Clickhouse database configuration
     'clickhouse' => [
@@ -30,6 +38,7 @@ return [
         'password' => getenv('CLICKHOUSE_PASSWORD') ?: 'YOUR_CLICKHOUSE_PASSWORD',
     ],
 
+
     // Anthropic API configuration
     'anthropic' => [
         'key' => getenv('ANTHROPIC_API_KEY') ?: 'YOUR_ANTHROPIC_API_KEY',
@@ -37,5 +46,5 @@ return [
     ],
 
     // Clickhouse database definition
-    'clickhouse_db_definition' => '[{"table":"donators","description":"member/tippers list","columns":{"id":"UInt64 (default generateSnowflakeID())","name":"String"},"engine":"MergeTree","primary_key":"id","order_by":"id"},{"table":"messages_v2","description":"chat history for rooms","columns":{"rid":"UInt64","did":"UInt64","message":"String","message_id":"String","time":"DateTime","username":"String","is_broadcaster":"Bool","in_fanclub":"Bool","is_following":"Bool","is_mod":"Bool","has_tokens":"Bool","tipped_recently":"Bool","tipped_alot_recently":"Bool","tipped_tons_recently":"Bool","gender":"String"},"engine":"MergeTree","partition_by":"toYYYYMMDD(time)","primary_key":"(rid, time)","order_by":"(rid, time, did)"},{"table":"room_activity","description":"room online time","columns":{"rid":"UInt64","time":"DateTime"},"engine":"MergeTree","partition_by":"toYYYYMMDD(time)","primary_key":"(rid, time)","order_by":"(rid, time)"},{"table":"rooms","description":"rooms list","columns":{"id":"UInt64 (default generateSnowflakeID())","name":"String","gender":"UInt8","fans":"UInt32","last":"DateTime"},"engine":"MergeTree","primary_key":"(id, name)","order_by":"(id, name)"},{"table":"stats_v2","description":"room tokens/tips received","columns":{"did":"UInt64","rid":"UInt64","token":"UInt32","time":"DateTime","unix":"UInt32"},"engine":"MergeTree","partition_by":"toYYYYMMDD(time)","primary_key":"(rid, did, time)","order_by":"(rid, did, time, token)"},{"materialized_view":"income_details","description":"room tokens/tips statistics aggregated by date","columns":{"did":"UInt64","rid":"UInt64","tokens":"UInt64","time":"Date","donates":"UInt64"},"engine":"SummingMergeTree","primary_key":"(rid, did, time)","order_by":"(rid, did, time)","source_table":"stats_v2"},{"materialized_view":"room_last_activity","description":"room online time","columns":{"rid":"UInt64","last_time":"DateTime"},"engine":"ReplacingMergeTree","primary_key":"rid","order_by":"rid","source_table":"room_activity"}]',
+    'clickhouse_db_definition' => '',
 ];
