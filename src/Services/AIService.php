@@ -95,4 +95,18 @@ class AIService implements AIServiceInterface
     {
         return $this->implementation->generateChatSummary($messages, $chatId, $chatTitle, $chatUsername, $windowLabel);
     }
+
+    /**
+     * Decide whether to send a reaction and which one (delegates to implementation)
+     *
+     * @param string $messageText The original message text
+     * @param string $username The username of the message sender
+     * @param string $chatContext Optional context from recent chat messages
+     * @param int $chatId The chat ID
+     * @return array|null Normalized decision or null on failure
+     */
+    public function getReactionDecision(string $messageText, string $username, string $chatContext = '', int $chatId = 0): ?array
+    {
+        return $this->implementation->getReactionDecision($messageText, $username, $chatContext, $chatId);
+    }
 }

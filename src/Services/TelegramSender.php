@@ -14,42 +14,54 @@ class TelegramSender
     private LoggerService $logger;
     private array $config;
     private ?MessageStorage $messageStorage;
+    private SettingsService $settingsService;
 
     public function __construct(
         MarkdownService $markdownService,
         LoggerService $logger,
         array $config,
+        SettingsService $settingsService,
         ?MessageStorage $messageStorage = null
     ) {
         $this->markdownService = $markdownService;
         $this->logger = $logger;
         $this->config = $config;
+        $this->settingsService = $settingsService;
         $this->messageStorage = $messageStorage;
     }
 
     /**
-     * Send a message with HTML formatting converted to MarkdownV2
+     * Send a response produced as HTML-like/text safely to Telegram using HTML parse_mode.
+     * The input can be arbitrary text (may include Markdown or HTML fragments). We sanitize it
+     * to avoid Telegram "can't parse entities" errors and wrap into a collapsible blockquote.
      *
      * @param int $chatId The chat ID to send the message to
-     * @param string $html The HTML text to send
+     * @param string $html The text/HTML content to send
      * @param int|null $replyToMessageId Optional message ID to reply to
      * @param array $additionalParams Additional parameters for the sendMessage request
      * @return ServerResponse The response from Telegram
      */
     public function sendHtmlAsMarkdownMessage(int $chatId, string $html, ?int $replyToMessageId = null, array $additionalParams = []): ServerResponse
     {
-        // Convert HTML to Telegram's MarkdownV2 format
-        $formattedText = $this->markdownService->htmlToTelegramMarkdown($html);
+        // 1) Sanitize to safe HTML: drop any tags to avoid malformed entities, then escape
+        $textOnly = strip_tags($html);
+        $escaped = htmlspecialchars($textOnly, ENT_QUOTES | ENT_SUBSTITUTE, 'UTF-8');
+        // Normalize line breaks into <br/>
+        $escaped = preg_replace("/\r\n|\r|\n/", "\n", $escaped);
+        $escapedWithBreaks = nl2br($escaped, false);
 
-        // Wrap the formatted text in spoiler tags to create an expandable quote
-        $formattedText = "<blockquote expandable>" . $formattedText . "</blockquote>
+        // Guard: avoid empty content which causes Telegram Bad Request
+        if (trim($escaped) === '') {
+            $escapedWithBreaks = '<i>Nothing to show</i>';
+        }
 
-#dataRequest";
+        // Wrap in Telegram-supported blockquote
+        $formattedText = '<blockquote expandable>' . $escapedWithBreaks . '</blockquote>' . "\n\n#dataRequest";
 
-        // Log the formatted text before sending
+        // Log the formatted text before sending (trim to avoid log bloat)
         $this->logger->log(
-            "Converted HTML to Markdown: " . $formattedText . PHP_EOL . "Original HTML: " . $html,
-            "HTML to Markdown Conversion"
+            "Prepared safe HTML for Telegram (len=" . strlen($formattedText) . ")",
+            "Telegram SafeSend"
         );
 
         // Prepare the request parameters
@@ -64,11 +76,38 @@ class TelegramSender
             $params['reply_to_message_id'] = $replyToMessageId;
         }
 
+        // Respect configured topic/thread if set for this chat
+        $threadId = $this->settingsService->getSetting($chatId, 'message_thread_id', null);
+        if ($threadId !== null) {
+            $params['message_thread_id'] = (int)$threadId;
+        }
+
         // Add any additional parameters
         $params = array_merge($params, $additionalParams);
 
         // Send the message
         $result = Request::sendMessage($params);
+
+        // If Telegram complains about entities, retry with plain text (no parse_mode)
+        if (!$result->isOk() && stripos($result->getDescription() ?? '', "can't parse entities") !== false) {
+            $this->logger->logError(
+                'HTML parse failed, retrying as plain text: ' . $result->getDescription(),
+                'Telegram SafeSend'
+            );
+
+            $plain = html_entity_decode($escaped, ENT_QUOTES | ENT_SUBSTITUTE, 'UTF-8');
+            $fallbackParams = [
+                'chat_id' => $chatId,
+                'text' => $plain
+            ];
+            if ($replyToMessageId !== null) {
+                $fallbackParams['reply_to_message_id'] = $replyToMessageId;
+            }
+            if ($threadId !== null) {
+                $fallbackParams['message_thread_id'] = (int)$threadId;
+            }
+            $result = Request::sendMessage($fallbackParams);
+        }
 
         // Store the bot's message if message storage is available and the message was sent successfully
         if ($this->messageStorage !== null && $result->isOk()) {
@@ -78,13 +117,12 @@ class TelegramSender
                 $messageId = $resultData->getMessageId();
                 $botUsername = $resultData->getFrom()->getUsername() ?? 'Bot';
 
-                // Store the message with [BOT] prefix to distinguish it
-                // For HTML messages, store a simplified version without markdown formatting
+                // Store plain text version in history
                 $this->messageStorage->storeMessage(
                     $chatId,
                     $timestamp,
                     "[BOT] " . $botUsername,
-                    strip_tags($html), // Remove HTML tags for storage
+                    strip_tags($html),
                     $messageId
                 );
 
@@ -106,9 +144,15 @@ class TelegramSender
      */
     public function sendMessage(int $chatId, string $text, ?int $replyToMessageId = null, ?string $parseMode = null): ServerResponse
     {
+        // Guard: avoid empty content which causes Telegram Bad Request
+        $safeText = trim($text);
+        if ($safeText === '') {
+            $safeText = 'Sorry, I could not generate a response for this request.';
+        }
+
         $params = [
             'chat_id' => $chatId,
-            'text' => $text
+            'text' => $safeText
         ];
 
         if ($parseMode !== null) {
@@ -117,6 +161,12 @@ class TelegramSender
 
         if ($replyToMessageId !== null) {
             $params['reply_to_message_id'] = $replyToMessageId;
+        }
+
+        // Respect configured topic/thread if set for this chat
+        $threadId = $this->settingsService->getSetting($chatId, 'message_thread_id', null);
+        if ($threadId !== null) {
+            $params['message_thread_id'] = (int)$threadId;
         }
 
         // Send the message
@@ -135,7 +185,7 @@ class TelegramSender
                     $chatId,
                     $timestamp,
                     "[BOT] " . $botUsername,
-                    $text,
+                    $safeText,
                     $messageId
                 );
 

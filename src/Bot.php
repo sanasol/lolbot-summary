@@ -11,7 +11,10 @@ use App\Services\MarkdownService;
 use App\Services\MessageStorage;
 use App\Services\SettingsService;
 use App\Services\TelegramSender;
+use App\Services\TelegramReactionService;
 use App\Services\WebhookProcessor;
+use App\Services\VoteService;
+use App\Services\NewUserRestrictionService;
 use Longman\TelegramBot\Telegram;
 use Longman\TelegramBot\Exception\TelegramException;
 use RuntimeException;
@@ -32,6 +35,9 @@ class Bot
     private BotMentionHandler $mentionHandler;
     private WebhookProcessor $webhookProcessor;
     private AntiSpamHandler $antiSpamHandler;
+    private \App\Services\VoteService $voteService;
+    private \App\Services\MuteService $muteService;
+    private NewUserRestrictionService $newUserRestrictionService;
 
     // For daily summary scheduling
     private $lastSummaryCheckTime = 0;
@@ -73,6 +79,8 @@ class Bot
                 $this->logger,
                 $this->aiService,
                 $this->antiSpamHandler,
+                $this->newUserRestrictionService,
+                $this->settingsService,
                 $this->config,
                 $this->telegram->getBotUsername()
             );
@@ -103,20 +111,27 @@ class Bot
             $this->markdownService,
             $this->logger,
             $this->config,
+            $this->settingsService,
             $this->messageStorage
         );
+        $reactionService = new TelegramReactionService($this->logger, $this->config);
         $this->mentionHandler = new BotMentionHandler(
             $this->aiService,
             $this->settingsService,
             $this->messageStorage,
-            $this->logger
+            $this->logger,
+            $reactionService
         );
+        $this->voteService = new VoteService($this->logPath);
+        $this->muteService = new \App\Services\MuteService($this->logPath);
         $this->commandHandler = new CommandHandler(
             $this->aiService,
             $this->settingsService,
             $this->messageStorage,
             $this->logger,
             $this->sender,
+            $this->voteService,
+            $this->muteService,
             $this->config
         );
 
@@ -125,6 +140,43 @@ class Bot
             $this->config,
             $this->logger
         );
+
+        // Initialize NewUserRestrictionService
+        $this->newUserRestrictionService = new NewUserRestrictionService(
+            $this->logger,
+            $this->settingsService,
+            $this->config
+        );
+    }
+
+    public function getVoteService(): \App\Services\VoteService
+    {
+        return $this->voteService;
+    }
+
+    public function getMuteService(): \App\Services\MuteService
+    {
+        return $this->muteService;
+    }
+
+    public function getCommandHandler(): CommandHandler
+    {
+        return $this->commandHandler;
+    }
+
+    public function getSettingsService(): SettingsService
+    {
+        return $this->settingsService;
+    }
+
+    public function getLoggerService(): LoggerService
+    {
+        return $this->logger;
+    }
+
+    public function getNewUserRestrictionService(): NewUserRestrictionService
+    {
+        return $this->newUserRestrictionService;
     }
 
     /**

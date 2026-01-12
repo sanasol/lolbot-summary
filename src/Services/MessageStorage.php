@@ -38,17 +38,22 @@ class MessageStorage
      * @param string $username The username of the sender
      * @param string $messageText The message text
      * @param int|null $messageId Optional message ID
+     * @param int|null $threadId Optional thread/topic ID for groups with topics enabled
      */
-    public function storeMessage(int $chatId, int $timestamp, string $username, string $messageText, int $messageId = null): void
+    public function storeMessage(int $chatId, int $timestamp, string $username, string $messageText, int $messageId = null, int $threadId = null): void
     {
         // Simple in-memory storage - consider a database or file for persistence across restarts
         if (!isset($this->chatMessages[$chatId])) {
             $this->chatMessages[$chatId] = [];
         }
 
-        // Format with message ID if available
+        // Format with message ID and thread ID if available
         if ($messageId) {
-            $this->chatMessages[$chatId][$timestamp] = sprintf("[%s] [ID:%d] %s: %s", date('H:i', $timestamp), $messageId, $username, $messageText);
+            if ($threadId) {
+                $this->chatMessages[$chatId][$timestamp] = sprintf("[%s] [ID:%d] [TID:%d] %s: %s", date('H:i', $timestamp), $messageId, $threadId, $username, $messageText);
+            } else {
+                $this->chatMessages[$chatId][$timestamp] = sprintf("[%s] [ID:%d] %s: %s", date('H:i', $timestamp), $messageId, $username, $messageText);
+            }
         } else {
             $this->chatMessages[$chatId][$timestamp] = sprintf("[%s] %s: %s", date('H:i', $timestamp), $username, $messageText);
         }

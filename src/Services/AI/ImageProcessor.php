@@ -338,8 +338,11 @@ class ImageProcessor
                     ]
                 ],
                 'modalities' => ['image', 'text'], // This is the key parameter for image generation
-                'max_tokens' => 300,
-                'temperature' => 0.7
+                'temperature' => 0.7,
+                'provider' => [
+                    'allow_fallbacks' => false,
+                    'only' => ['google-vertex'],
+                ],
             ];
 
             // If user provided an image, include it in the request
@@ -404,9 +407,22 @@ class ImageProcessor
             ]);
 
             $responseContent = $response->getBody()->getContents();
-            $this->logger->log("Raw IMAGE API response: " .$responseContent , "Image Generation", "webhook");
 
             $body = json_decode($responseContent, true);
+
+            // If provider returned a top-level error (OpenRouter sometimes wraps in choices[0].error)
+            if (isset($body['choices'][0]['error'])) {
+                $err = $body['choices'][0]['error'];
+                $msg = is_array($err) && isset($err['message']) ? $err['message'] : json_encode($err);
+                $this->logger->log("Provider error from IMAGE API: " . $msg. ' $responseContent='.$responseContent, "Image Generation", "webhook", true);
+
+                return [
+                    'url' => null,
+                    'prompt' => $prompt,
+                    'revised_prompt' => null,
+                    'text_response' => 'Something went wrong, try again later.',
+                ];
+            }
 
             // Parse the response according to the OpenRouter API format
             if (isset($body['choices'][0]['message'])) {
@@ -473,6 +489,11 @@ class ImageProcessor
                 // Text-only response
                 if (isset($message['content']) && is_string($message['content'])) {
                     $textContent = $message['content'];
+                    // Some providers may return empty string due to disabled reasoning in image mode
+                    if (trim($textContent) === '') {
+                        $this->logger->log("Received empty text-only response from IMAGE API", "Image Generation", "webhook", true);
+                        return null;
+                    }
                     $this->logger->log("Received text-only response: " . $textContent, "Image Generation", "webhook");
 
                     return [

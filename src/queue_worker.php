@@ -10,6 +10,7 @@ require_once __DIR__ . '/../vendor/autoload.php';
 
 use App\Bot;
 use App\Services\QueueService;
+use App\Services\PeriodicTaskRunner;
 use Dotenv\Dotenv;
 
 // Load environment variables from .env file if it exists
@@ -45,6 +46,7 @@ $queueService = new QueueService();
 
 // Initialize the bot
 $bot = new Bot($config);
+$periodic = new PeriodicTaskRunner($bot, 5);
 
 echo "Queue worker started. Waiting for webhook messages...\n";
 
@@ -78,6 +80,14 @@ while (true) {
                 return false;
             }
         });
+
+        // Periodic tasks
+        try {
+            $periodic->tick();
+        } catch (\Throwable $e) {
+            $errorMessage = $logPrefix . "Periodic tick error: " . $e->getMessage();
+            file_put_contents($logFile, $errorMessage . PHP_EOL, FILE_APPEND);
+        }
 
         // Sleep for a short time to prevent CPU overuse
         usleep(100000); // 100ms

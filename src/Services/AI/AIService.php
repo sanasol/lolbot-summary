@@ -20,6 +20,7 @@ class AIService implements AIServiceInterface
     private SummaryGenerator $summaryGenerator;
     private PromptBuilder $promptBuilder;
     private ResponseFormatter $formatter;
+    private MentionReactionDecisionGenerator $reactionDecisionGenerator;
 
     /**
      * Constructor
@@ -48,6 +49,7 @@ class AIService implements AIServiceInterface
         $this->mentionGenerator = new MentionResponseGenerator($this->config, $this->promptBuilder, $this->formatter, $this->logger);
         $this->imageProcessor = new ImageProcessor($this->config, $this->promptBuilder, $this->formatter, $this->logger);
         $this->summaryGenerator = new SummaryGenerator($this->config, $this->promptBuilder, $this->formatter, $this->logger);
+        $this->reactionDecisionGenerator = new MentionReactionDecisionGenerator($this->config, $this->logger);
     }
 
     /**
@@ -145,6 +147,23 @@ class AIService implements AIServiceInterface
     public function generateImageDescription(string $imageData, bool $isBase64 = false, ?string $caption = ''): ?string
     {
         return $this->imageProcessor->generateImageDescription($imageData, $isBase64, $caption);
+    }
+
+    /**
+     * Decide whether to send a reaction and which one.
+     *
+     * Returns a normalized decision array or null on failure:
+     * [
+     *   'should_react' => bool,
+     *   'confidence' => int, // 0-100
+     *   'emoji' => string,   // single emoji
+     *   'is_big' => bool,
+     *   'reason' => string,
+     * ]
+     */
+    public function getReactionDecision(string $messageText, string $username, string $chatContext = '', int $chatId = 0): ?array
+    {
+        return $this->reactionDecisionGenerator->decide($messageText, $username, $chatContext, $chatId);
     }
 
     /**

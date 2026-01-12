@@ -14,6 +14,15 @@ class SettingsService
         'summary_enabled' => true,  // Whether summaries are enabled for this group
         'bot_mentions_enabled' => true,  // Whether bot should respond to mentions
         'summary_hour_utc' => 8, // Default summary sending hour in UTC (0-23)
+        'message_thread_id' => null, // Topic/thread ID in supergroup to restrict bot replies
+        // Community moderation via voting
+        'vote_moderation_enabled' => true, // Enable /voteban and /votemute feature
+        'vote_threshold_ban' => 5, // Number of YES votes needed to ban
+        'vote_threshold_mute' => 3, // Number of YES votes needed to mute
+        'vote_duration_sec' => 300, // Vote expires in seconds (default 10 minutes)
+        'vote_mute_duration_sec' => 3600, // Mute duration in seconds (default 1 hour)
+        // New user restriction
+        'new_user_restriction_enabled' => false, // Require new users to solve captcha or wait 10 minutes
     ];
 
     /**
@@ -189,6 +198,11 @@ class SettingsService
                 return in_array($value, array_keys($this->getAvailableLanguages()));
             case 'summary_enabled':
             case 'bot_mentions_enabled':
+            case 'bot_mentions_react_when_no_reply':
+            case 'bot_mentions_reaction_allow_ai_emoji':
+            case 'bot_mentions_reaction_allow_big':
+            case 'vote_moderation_enabled':
+            case 'new_user_restriction_enabled':
                 return is_bool($value) || (is_string($value) && in_array(strtolower($value), ['true', 'false', '1', '0']));
             case 'summary_hour_utc':
                 if (is_numeric($value)) {
@@ -201,6 +215,56 @@ class SettingsService
                         $int = (int)$value;
                         return $int >= 0 && $int <= 23;
                     }
+                }
+                return false;
+            case 'message_thread_id':
+                if ($value === null) return true;
+                if (is_numeric($value)) return true;
+                if (is_string($value)) {
+                    $v = strtolower(trim($value));
+                    if ($v === 'null' || $v === 'clear' || $v === 'none') return true;
+                    if (ctype_digit($value)) return true;
+                }
+                return false;
+            case 'bot_mentions_reaction_min_confidence':
+                if (is_numeric($value)) {
+                    $int = (int)$value;
+                    return $int >= 0 && $int <= 100;
+                }
+                if (is_string($value) && ctype_digit($value)) {
+                    $int = (int)$value;
+                    return $int >= 0 && $int <= 100;
+                }
+                return false;
+            case 'vote_threshold_ban':
+            case 'vote_threshold_mute':
+                if (is_numeric($value)) {
+                    $int = (int)$value;
+                    return $int >= 1 && $int <= 100;
+                }
+                if (is_string($value) && ctype_digit($value)) {
+                    $int = (int)$value;
+                    return $int >= 1 && $int <= 100;
+                }
+                return false;
+            case 'vote_duration_sec':
+                if (is_numeric($value)) {
+                    $int = (int)$value;
+                    return $int >= 30 && $int <= 604800; // 30s to 7 days
+                }
+                if (is_string($value) && ctype_digit($value)) {
+                    $int = (int)$value;
+                    return $int >= 30 && $int <= 604800;
+                }
+                return false;
+            case 'vote_mute_duration_sec':
+                if (is_numeric($value)) {
+                    $int = (int)$value;
+                    return $int >= 60 && $int <= 2592000; // 1 minute to 30 days
+                }
+                if (is_string($value) && ctype_digit($value)) {
+                    $int = (int)$value;
+                    return $int >= 60 && $int <= 2592000;
                 }
                 return false;
             default:
@@ -220,6 +284,11 @@ class SettingsService
         switch ($key) {
             case 'summary_enabled':
             case 'bot_mentions_enabled':
+            case 'bot_mentions_react_when_no_reply':
+            case 'bot_mentions_reaction_allow_ai_emoji':
+            case 'bot_mentions_reaction_allow_big':
+            case 'vote_moderation_enabled':
+            case 'new_user_restriction_enabled':
                 if (is_string($value)) {
                     return in_array(strtolower($value), ['true', '1', 'on']);
                 }
@@ -228,6 +297,36 @@ class SettingsService
                 $int = (int)$value;
                 if ($int < 0) $int = 0;
                 if ($int > 23) $int = 23;
+                return $int;
+            case 'message_thread_id':
+                if ($value === null) return null;
+                if (is_string($value)) {
+                    $v = strtolower(trim($value));
+                    if (in_array($v, ['null','clear','none'])) return null;
+                    if (ctype_digit($value)) return (int)$value;
+                }
+                if (is_numeric($value)) return (int)$value;
+                return null;
+            case 'bot_mentions_reaction_min_confidence':
+                $int = (int)$value;
+                if ($int < 0) $int = 0;
+                if ($int > 100) $int = 100;
+                return $int;
+            case 'vote_threshold_ban':
+            case 'vote_threshold_mute':
+                $int = (int)$value;
+                if ($int < 1) $int = 1;
+                if ($int > 100) $int = 100;
+                return $int;
+            case 'vote_duration_sec':
+                $int = (int)$value;
+                if ($int < 30) $int = 30;
+                if ($int > 604800) $int = 604800; // 7 days
+                return $int;
+            case 'vote_mute_duration_sec':
+                $int = (int)$value;
+                if ($int < 60) $int = 60;
+                if ($int > 2592000) $int = 2592000; // 30 days
                 return $int;
             default:
                 return $value;

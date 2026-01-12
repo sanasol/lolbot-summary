@@ -22,7 +22,7 @@ if (!file_exists($configPath)) {
 $config = require $configPath;
 
 // Create a user message with the input (compatible with both enum and string role implementations)
-$userMessage = new \NeuronAI\Chat\Messages\Message(\NeuronAI\Chat\Enums\MessageRole::USER, 'hello');
+$userMessage = new \NeuronAI\Chat\Messages\Message(\NeuronAI\Chat\Enums\MessageRole::USER, 'hello, best tipper of the day');
 
 $inspector = new Inspector(
     (new Configuration($config['inspector_ingestion_key']))

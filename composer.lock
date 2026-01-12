@@ -4,29 +4,29 @@
         "Read more about it at https://getcomposer.org/doc/01-basic-usage.md#installing-dependencies",
         "This file is @generated automatically"
     ],
-    "content-hash": "36e22b7dbb65c6256a60414ba9693cd5",
+    "content-hash": "cff3f891133f794208cfc40b94f7753f",
     "packages": [
         {
             "name": "brick/math",
-            "version": "0.12.3",
+            "version": "0.14.0",
             "source": {
                 "type": "git",
                 "url": "https://github.com/brick/math.git",
-                "reference": "866551da34e9a618e64a819ee1e01c20d8a588ba"
+                "reference": "113a8ee2656b882d4c3164fa31aa6e12cbb7aaa2"
             },
             "dist": {
                 "type": "zip",
-                "url": "https://api.github.com/repos/brick/math/zipball/866551da34e9a618e64a819ee1e01c20d8a588ba",
-                "reference": "866551da34e9a618e64a819ee1e01c20d8a588ba",
+                "url": "https://api.github.com/repos/brick/math/zipball/113a8ee2656b882d4c3164fa31aa6e12cbb7aaa2",
+                "reference": "113a8ee2656b882d4c3164fa31aa6e12cbb7aaa2",
                 "shasum": ""
             },
             "require": {
-                "php": "^8.1"
+                "php": "^8.2"
             },
             "require-dev": {
                 "php-coveralls/php-coveralls": "^2.2",
-                "phpunit/phpunit": "^10.1",
-                "vimeo/psalm": "6.8.8"
+                "phpstan/phpstan": "2.1.22",
+                "phpunit/phpunit": "^11.5"
             },
             "type": "library",
             "autoload": {
@@ -56,7 +56,7 @@
             ],
             "support": {
                 "issues": "https://github.com/brick/math/issues",
-                "source": "https://github.com/brick/math/tree/0.12.3"
+                "source": "https://github.com/brick/math/tree/0.14.0"
             },
             "funding": [
                 {
@@ -64,24 +64,24 @@
                     "type": "github"
                 }
             ],
-            "time": "2025-02-28T13:11:00+00:00"
+            "time": "2025-08-29T12:40:03+00:00"
         },
         {
             "name": "enqueue/dsn",
-            "version": "0.10.25",
+            "version": "0.10.26",
             "source": {
                 "type": "git",
                 "url": "https://github.com/php-enqueue/dsn.git",
-                "reference": "83193ee9e3f83d2becc66f748bb5bec232281236"
+                "reference": "1948d3c5918ee2bdf833392d02f14e05d4006979"
             },
             "dist": {
                 "type": "zip",
-                "url": "https://api.github.com/repos/php-enqueue/dsn/zipball/83193ee9e3f83d2becc66f748bb5bec232281236",
-                "reference": "83193ee9e3f83d2becc66f748bb5bec232281236",
+                "url": "https://api.github.com/repos/php-enqueue/dsn/zipball/1948d3c5918ee2bdf833392d02f14e05d4006979",
+                "reference": "1948d3c5918ee2bdf833392d02f14e05d4006979",
                 "shasum": ""
             },
             "require": {
-                "php": "^7.4|^8.0"
+                "php": "^8.0"
             },
             "require-dev": {
                 "phpunit/phpunit": "^9.5"
@@ -117,25 +117,25 @@
                 "issues": "https://github.com/php-enqueue/enqueue-dev/issues",
                 "source": "https://github.com/php-enqueue/enqueue-dev"
             },
-            "time": "2025-01-17T21:33:18+00:00"
+            "time": "2025-04-27T13:30:31+00:00"
         },
         {
             "name": "enqueue/redis",
-            "version": "0.10.25",
+            "version": "0.10.26",
             "source": {
                 "type": "git",
                 "url": "https://github.com/php-enqueue/redis.git",
-                "reference": "170b41db2c707d6e12b596eb43887e0c4e8ee47b"
+                "reference": "2aa6a2fa9b43f92d338ca867ae3569337ce1acaf"
             },
             "dist": {
                 "type": "zip",
-                "url": "https://api.github.com/repos/php-enqueue/redis/zipball/170b41db2c707d6e12b596eb43887e0c4e8ee47b",
-                "reference": "170b41db2c707d6e12b596eb43887e0c4e8ee47b",
+                "url": "https://api.github.com/repos/php-enqueue/redis/zipball/2aa6a2fa9b43f92d338ca867ae3569337ce1acaf",
+                "reference": "2aa6a2fa9b43f92d338ca867ae3569337ce1acaf",
                 "shasum": ""
             },
             "require": {
                 "enqueue/dsn": "^0.10",
-                "php": "^7.4|^8.0",
+                "php": "^8.1",
                 "queue-interop/queue-interop": "^0.8",
                 "ramsey/uuid": "^3.5|^4"
             },
@@ -181,7 +181,7 @@
                 "issues": "https://github.com/php-enqueue/enqueue-dev/issues",
                 "source": "https://github.com/php-enqueue/enqueue-dev"
             },
-            "time": "2025-01-17T21:33:18+00:00"
+            "time": "2025-04-27T14:55:34+00:00"
         },
         {
             "name": "graham-campbell/result-type",
@@ -627,80 +627,6 @@
             "time": "2025-07-09T17:22:19+00:00"
         },
         {
-            "name": "inspector-apm/neuron-ai",
-            "version": "1.17.3",
-            "source": {
-                "type": "git",
-                "url": "https://github.com/inspector-apm/neuron-ai.git",
-                "reference": "fb9040031e0e7edb175f1c338c4f88bc432d8f98"
-            },
-            "dist": {
-                "type": "zip",
-                "url": "https://api.github.com/repos/inspector-apm/neuron-ai/zipball/fb9040031e0e7edb175f1c338c4f88bc432d8f98",
-                "reference": "fb9040031e0e7edb175f1c338c4f88bc432d8f98",
-                "shasum": ""
-            },
-            "require": {
-                "guzzlehttp/guzzle": "^7.9",
-                "inspector-apm/inspector-php": "^3.15.10",
-                "php": "^8.1",
-                "psr/http-message": "^1.0|^2.0",
-                "psr/log": "^1.0|^2.0|^3.0"
-            },
-            "require-dev": {
-                "aws/aws-sdk-php": "^3.209",
-                "doctrine/orm": "^2.20",
-                "elasticsearch/elasticsearch": "^8.0",
-                "ext-pdo": "*",
-                "friendsofphp/php-cs-fixer": "^3.75",
-                "html2text/html2text": "^4.3",
-                "monolog/monolog": "^3.9",
-                "php-http/curl-client": "^2.3",
-                "phpstan/phpstan": "^2.1",
-                "phpunit/phpunit": "^9.0",
-                "rector/rector": "^2.0",
-                "symfony/cache": "^5.4 || ^6.4 || ^7.0",
-                "symfony/process": "^5.0|^6.0|^7.0",
-                "tomasvotruba/type-coverage": "^2.0",
-                "typesense/typesense-php": "^5.0"
-            },
-            "suggest": {
-                "aws/aws-sdk-php": "^3.209",
-                "doctrine/orm": "^2.20",
-                "elasticsearch/elasticsearch": "^7.0|^8.0",
-                "php-http/curl-client": "^2.3",
-                "symfony/process": "^4.0|^5.0|^6.0|^7.0",
-                "typesense/typesense-php": "^5.0"
-            },
-            "bin": [
-                "bin/evaluation",
-                "bin/evaluation.bat",
-                "bin/evaluation.ps1"
-            ],
-            "type": "library",
-            "autoload": {
-                "psr-4": {
-                    "NeuronAI\\": "src/"
-                }
-            },
-            "notification-url": "https://packagist.org/downloads/",
-            "license": [
-                "MIT"
-            ],
-            "authors": [
-                {
-                    "name": "Valerio Barbera",
-                    "email": "valerio@inspector.dev"
-                }
-            ],
-            "description": "The AI Agent Development Kit for PHP.",
-            "support": {
-                "issues": "https://github.com/inspector-apm/neuron-ai/issues",
-                "source": "https://github.com/inspector-apm/neuron-ai/tree/1.17.3"
-            },
-            "time": "2025-08-26T16:02:49+00:00"
-        },
-        {
             "name": "longman/telegram-bot",
             "version": "0.80.0",
             "source": {
@@ -843,17 +769,86 @@
             "time": "2024-02-01T17:06:13+00:00"
         },
         {
-            "name": "phpoption/phpoption",
-            "version": "1.9.3",
+            "name": "neuron-core/neuron-ai",
+            "version": "2.8.9",
             "source": {
                 "type": "git",
-                "url": "https://github.com/schmittjoh/php-option.git",
-                "reference": "e3fac8b24f56113f7cb96af14958c0dd16330f54"
+                "url": "https://github.com/neuron-core/neuron-ai.git",
+                "reference": "b212194d0ca4fabe7a5bcba7342f4a393e018f09"
             },
             "dist": {
                 "type": "zip",
-                "url": "https://api.github.com/repos/schmittjoh/php-option/zipball/e3fac8b24f56113f7cb96af14958c0dd16330f54",
-                "reference": "e3fac8b24f56113f7cb96af14958c0dd16330f54",
+                "url": "https://api.github.com/repos/neuron-core/neuron-ai/zipball/b212194d0ca4fabe7a5bcba7342f4a393e018f09",
+                "reference": "b212194d0ca4fabe7a5bcba7342f4a393e018f09",
+                "shasum": ""
+            },
+            "require": {
+                "guzzlehttp/guzzle": "^7.9",
+                "inspector-apm/inspector-php": "^3.15.10",
+                "php": "^8.1",
+                "psr/http-message": "^1.0|^2.0",
+                "psr/log": "^1.0|^2.0|^3.0"
+            },
+            "require-dev": {
+                "aws/aws-sdk-php": "^3.209",
+                "elasticsearch/elasticsearch": "^8.0",
+                "ext-pdo": "*",
+                "friendsofphp/php-cs-fixer": "^3.75",
+                "html2text/html2text": "^4.3",
+                "illuminate/database": "^10.0|^11.0|^12.0",
+                "phpstan/phpstan": "^2.1",
+                "phpunit/phpunit": "^9.0",
+                "rector/rector": "^2.0",
+                "spatie/fork": "^1.2",
+                "tomasvotruba/type-coverage": "^2.0",
+                "typesense/typesense-php": "^5.0"
+            },
+            "suggest": {
+                "aws/aws-sdk-php": "^3.209",
+                "elasticsearch/elasticsearch": "^7.0|^8.0",
+                "php-http/curl-client": "^2.3",
+                "spatie/fork": "^1.2",
+                "symfony/process": "^4.0|^5.0|^6.0|^7.0",
+                "typesense/typesense-php": "^5.0"
+            },
+            "bin": [
+                "bin/neuron"
+            ],
+            "type": "library",
+            "autoload": {
+                "psr-4": {
+                    "NeuronAI\\": "src/"
+                }
+            },
+            "notification-url": "https://packagist.org/downloads/",
+            "license": [
+                "MIT"
+            ],
+            "authors": [
+                {
+                    "name": "Valerio Barbera",
+                    "email": "valerio@inspector.dev"
+                }
+            ],
+            "description": "The PHP Agentic Framework.",
+            "support": {
+                "issues": "https://github.com/neuron-core/neuron-ai/issues",
+                "source": "https://github.com/neuron-core/neuron-ai/tree/2.8.9"
+            },
+            "time": "2025-11-17T15:42:32+00:00"
+        },
+        {
+            "name": "phpoption/phpoption",
+            "version": "1.9.4",
+            "source": {
+                "type": "git",
+                "url": "https://github.com/schmittjoh/php-option.git",
+                "reference": "638a154f8d4ee6a5cfa96d6a34dfbe0cffa9566d"
+            },
+            "dist": {
+                "type": "zip",
+                "url": "https://api.github.com/repos/schmittjoh/php-option/zipball/638a154f8d4ee6a5cfa96d6a34dfbe0cffa9566d",
+                "reference": "638a154f8d4ee6a5cfa96d6a34dfbe0cffa9566d",
                 "shasum": ""
             },
             "require": {
@@ -861,7 +856,7 @@
             },
             "require-dev": {
                 "bamarni/composer-bin-plugin": "^1.8.2",
-                "phpunit/phpunit": "^8.5.39 || ^9.6.20 || ^10.5.28"
+                "phpunit/phpunit": "^8.5.44 || ^9.6.25 || ^10.5.53 || ^11.5.34"
             },
             "type": "library",
             "extra": {
@@ -903,7 +898,7 @@
             ],
             "support": {
                 "issues": "https://github.com/schmittjoh/php-option/issues",
-                "source": "https://github.com/schmittjoh/php-option/tree/1.9.3"
+                "source": "https://github.com/schmittjoh/php-option/tree/1.9.4"
             },
             "funding": [
                 {
@@ -915,20 +910,20 @@
                     "type": "tidelift"
                 }
             ],
-            "time": "2024-07-20T21:41:07+00:00"
+            "time": "2025-08-21T11:53:16+00:00"
         },
         {
             "name": "predis/predis",
-            "version": "v2.3.0",
+            "version": "v2.4.1",
             "source": {
                 "type": "git",
                 "url": "https://github.com/predis/predis.git",
-                "reference": "bac46bfdb78cd6e9c7926c697012aae740cb9ec9"
+                "reference": "07105e050622ed80bd60808367ced9e379f31530"
             },
             "dist": {
                 "type": "zip",
-                "url": "https://api.github.com/repos/predis/predis/zipball/bac46bfdb78cd6e9c7926c697012aae740cb9ec9",
-                "reference": "bac46bfdb78cd6e9c7926c697012aae740cb9ec9",
+                "url": "https://api.github.com/repos/predis/predis/zipball/07105e050622ed80bd60808367ced9e379f31530",
+                "reference": "07105e050622ed80bd60808367ced9e379f31530",
                 "shasum": ""
             },
             "require": {
@@ -937,6 +932,7 @@
             "require-dev": {
                 "friendsofphp/php-cs-fixer": "^3.3",
                 "phpstan/phpstan": "^1.9",
+                "phpunit/phpcov": "^6.0 || ^8.0",
                 "phpunit/phpunit": "^8.0 || ^9.4"
             },
             "suggest": {
@@ -959,7 +955,7 @@
                     "role": "Maintainer"
                 }
             ],
-            "description": "A flexible and feature-complete Redis client for PHP.",
+            "description": "A flexible and feature-complete Redis/Valkey client for PHP.",
             "homepage": "http://github.com/predis/predis",
             "keywords": [
                 "nosql",
@@ -968,7 +964,7 @@
             ],
             "support": {
                 "issues": "https://github.com/predis/predis/issues",
-                "source": "https://github.com/predis/predis/tree/v2.3.0"
+                "source": "https://github.com/predis/predis/tree/v2.4.1"
             },
             "funding": [
                 {
@@ -976,7 +972,7 @@
                     "type": "github"
                 }
             ],
-            "time": "2024-11-21T20:00:02+00:00"
+            "time": "2025-11-12T18:00:11+00:00"
         },
         {
             "name": "psr/http-client",
@@ -1361,21 +1357,20 @@
         },
         {
             "name": "ramsey/uuid",
-            "version": "4.7.6",
+            "version": "4.9.1",
             "source": {
                 "type": "git",
                 "url": "https://github.com/ramsey/uuid.git",
-                "reference": "91039bc1faa45ba123c4328958e620d382ec7088"
+                "reference": "81f941f6f729b1e3ceea61d9d014f8b6c6800440"
             },
             "dist": {
                 "type": "zip",
-                "url": "https://api.github.com/repos/ramsey/uuid/zipball/91039bc1faa45ba123c4328958e620d382ec7088",
-                "reference": "91039bc1faa45ba123c4328958e620d382ec7088",
+                "url": "https://api.github.com/repos/ramsey/uuid/zipball/81f941f6f729b1e3ceea61d9d014f8b6c6800440",
+                "reference": "81f941f6f729b1e3ceea61d9d014f8b6c6800440",
                 "shasum": ""
             },
             "require": {
-                "brick/math": "^0.8.8 || ^0.9 || ^0.10 || ^0.11 || ^0.12",
-                "ext-json": "*",
+                "brick/math": "^0.8.8 || ^0.9 || ^0.10 || ^0.11 || ^0.12 || ^0.13 || ^0.14",
                 "php": "^8.0",
                 "ramsey/collection": "^1.2 || ^2.0"
             },
@@ -1383,26 +1378,23 @@
                 "rhumsaa/uuid": "self.version"
             },
             "require-dev": {
-                "captainhook/captainhook": "^5.10",
+                "captainhook/captainhook": "^5.25",
                 "captainhook/plugin-composer": "^5.3",
-                "dealerdirect/phpcodesniffer-composer-installer": "^0.7.0",
-                "doctrine/annotations": "^1.8",
-                "ergebnis/composer-normalize": "^2.15",
-                "mockery/mockery": "^1.3",
+                "dealerdirect/phpcodesniffer-composer-installer": "^1.0",
+                "ergebnis/composer-normalize": "^2.47",
+                "mockery/mockery": "^1.6",
                 "paragonie/random-lib": "^2",
-                "php-mock/php-mock": "^2.2",
-                "php-mock/php-mock-mockery": "^1.3",
-                "php-parallel-lint/php-parallel-lint": "^1.1",
-                "phpbench/phpbench": "^1.0",
-                "phpstan/extension-installer": "^1.1",
-                "phpstan/phpstan": "^1.8",
-                "phpstan/phpstan-mockery": "^1.1",
-                "phpstan/phpstan-phpunit": "^1.1",
-                "phpunit/phpunit": "^8.5 || ^9",
-                "ramsey/composer-repl": "^1.4",
-                "slevomat/coding-standard": "^8.4",
-                "squizlabs/php_codesniffer": "^3.5",
-                "vimeo/psalm": "^4.9"
+                "php-mock/php-mock": "^2.6",
+                "php-mock/php-mock-mockery": "^1.5",
+                "php-parallel-lint/php-parallel-lint": "^1.4.0",
+                "phpbench/phpbench": "^1.2.14",
+                "phpstan/extension-installer": "^1.4",
+                "phpstan/phpstan": "^2.1",
+                "phpstan/phpstan-mockery": "^2.0",
+                "phpstan/phpstan-phpunit": "^2.0",
+                "phpunit/phpunit": "^9.6",
+                "slevomat/coding-standard": "^8.18",
+                "squizlabs/php_codesniffer": "^3.13"
             },
             "suggest": {
                 "ext-bcmath": "Enables faster math with arbitrary-precision integers using BCMath.",
@@ -1437,19 +1429,9 @@
             ],
             "support": {
                 "issues": "https://github.com/ramsey/uuid/issues",
-                "source": "https://github.com/ramsey/uuid/tree/4.7.6"
+                "source": "https://github.com/ramsey/uuid/tree/4.9.1"
             },
-            "funding": [
-                {
-                    "url": "https://github.com/ramsey",
-                    "type": "github"
-                },
-                {
-                    "url": "https://tidelift.com/funding/github/packagist/ramsey/uuid",
-                    "type": "tidelift"
-                }
-            ],
-            "time": "2024-04-27T21:32:50+00:00"
+            "time": "2025-09-04T20:59:21+00:00"
         },
         {
             "name": "smi2/phpclickhouse",
@@ -1579,7 +1561,7 @@
         },
         {
             "name": "symfony/polyfill-ctype",
-            "version": "v1.31.0",
+            "version": "v1.33.0",
             "source": {
                 "type": "git",
                 "url": "https://github.com/symfony/polyfill-ctype.git",
@@ -1638,7 +1620,7 @@
                 "portable"
             ],
             "support": {
-                "source": "https://github.com/symfony/polyfill-ctype/tree/v1.31.0"
+                "source": "https://github.com/symfony/polyfill-ctype/tree/v1.33.0"
             },
             "funding": [
                 {
@@ -1647,6 +1629,10 @@
                 },
                 {
                     "url": "https://github.com/fabpot",
+                    "type": "github"
+                },
+                {
+                    "url": "https://github.com/nicolas-grekas",
                     "type": "github"
                 },
                 {
@@ -1743,16 +1729,16 @@
         },
         {
             "name": "symfony/polyfill-php80",
-            "version": "v1.31.0",
+            "version": "v1.33.0",
             "source": {
                 "type": "git",
                 "url": "https://github.com/symfony/polyfill-php80.git",
-                "reference": "60328e362d4c2c802a54fcbf04f9d3fb892b4cf8"
+                "reference": "0cc9dd0f17f61d8131e7df6b84bd344899fe2608"
             },
             "dist": {
                 "type": "zip",
-                "url": "https://api.github.com/repos/symfony/polyfill-php80/zipball/60328e362d4c2c802a54fcbf04f9d3fb892b4cf8",
-                "reference": "60328e362d4c2c802a54fcbf04f9d3fb892b4cf8",
+                "url": "https://api.github.com/repos/symfony/polyfill-php80/zipball/0cc9dd0f17f61d8131e7df6b84bd344899fe2608",
+                "reference": "0cc9dd0f17f61d8131e7df6b84bd344899fe2608",
                 "shasum": ""
             },
             "require": {
@@ -1803,7 +1789,7 @@
                 "shim"
             ],
             "support": {
-                "source": "https://github.com/symfony/polyfill-php80/tree/v1.31.0"
+                "source": "https://github.com/symfony/polyfill-php80/tree/v1.33.0"
             },
             "funding": [
                 {
@@ -1815,24 +1801,28 @@
                     "type": "github"
                 },
                 {
+                    "url": "https://github.com/nicolas-grekas",
+                    "type": "github"
+                },
+                {
                     "url": "https://tidelift.com/funding/github/packagist/symfony/symfony",
                     "type": "tidelift"
                 }
             ],
-            "time": "2024-09-09T11:45:10+00:00"
+            "time": "2025-01-02T08:10:11+00:00"
         },
         {
             "name": "vlucas/phpdotenv",
-            "version": "v5.6.1",
+            "version": "v5.6.2",
             "source": {
                 "type": "git",
                 "url": "https://github.com/vlucas/phpdotenv.git",
-                "reference": "a59a13791077fe3d44f90e7133eb68e7d22eaff2"
+                "reference": "24ac4c74f91ee2c193fa1aaa5c249cb0822809af"
             },
             "dist": {
                 "type": "zip",
-                "url": "https://api.github.com/repos/vlucas/phpdotenv/zipball/a59a13791077fe3d44f90e7133eb68e7d22eaff2",
-                "reference": "a59a13791077fe3d44f90e7133eb68e7d22eaff2",
+                "url": "https://api.github.com/repos/vlucas/phpdotenv/zipball/24ac4c74f91ee2c193fa1aaa5c249cb0822809af",
+                "reference": "24ac4c74f91ee2c193fa1aaa5c249cb0822809af",
                 "shasum": ""
             },
             "require": {
@@ -1891,7 +1881,7 @@
             ],
             "support": {
                 "issues": "https://github.com/vlucas/phpdotenv/issues",
-                "source": "https://github.com/vlucas/phpdotenv/tree/v5.6.1"
+                "source": "https://github.com/vlucas/phpdotenv/tree/v5.6.2"
             },
             "funding": [
                 {
@@ -1903,25 +1893,25 @@
                     "type": "tidelift"
                 }
             ],
-            "time": "2024-07-20T21:52:34+00:00"
+            "time": "2025-04-30T23:37:27+00:00"
         },
         {
             "name": "wpsocio/telegram-format-text",
-            "version": "v1.0.0",
+            "version": "v1.0.1",
             "source": {
                 "type": "git",
                 "url": "https://github.com/wpsocio/telegram-format-text.git",
-                "reference": "5fb305f37feac51e201879af279249a991855ecd"
+                "reference": "e09bfd8dfe2c7683958c62e7df67979866bce467"
             },
             "dist": {
                 "type": "zip",
-                "url": "https://api.github.com/repos/wpsocio/telegram-format-text/zipball/5fb305f37feac51e201879af279249a991855ecd",
-                "reference": "5fb305f37feac51e201879af279249a991855ecd",
+                "url": "https://api.github.com/repos/wpsocio/telegram-format-text/zipball/e09bfd8dfe2c7683958c62e7df67979866bce467",
+                "reference": "e09bfd8dfe2c7683958c62e7df67979866bce467",
                 "shasum": ""
             },
             "require-dev": {
-                "pestphp/pest": "^1.22",
-                "wp-coding-standards/wpcs": "^3.0.1"
+                "pestphp/pest": "^1.23",
+                "wp-coding-standards/wpcs": "^3.1"
             },
             "type": "library",
             "autoload": {
@@ -1936,21 +1926,21 @@
             "description": "HTML to Text converter/formatter for Telegram Bot API",
             "support": {
                 "issues": "https://github.com/wpsocio/telegram-format-text/issues",
-                "source": "https://github.com/wpsocio/telegram-format-text/tree/v1.0.0"
+                "source": "https://github.com/wpsocio/telegram-format-text/tree/v1.0.1"
             },
-            "time": "2024-01-26T17:06:07+00:00"
+            "time": "2025-07-30T09:47:46+00:00"
         }
     ],
     "packages-dev": [],
     "aliases": [],
     "minimum-stability": "dev",
-    "stability-flags": {},
+    "stability-flags": [],
     "prefer-stable": true,
     "prefer-lowest": false,
     "platform": {
         "php": ">=8.1",
         "ext-pdo": "*"
     },
-    "platform-dev": {},
-    "plugin-api-version": "2.6.0"
+    "platform-dev": [],
+    "plugin-api-version": "2.3.0"
 }

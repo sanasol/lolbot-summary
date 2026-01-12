@@ -137,9 +137,15 @@ class PromptBuilder
 
         return 'You are a helpful assistant that summarizes Telegram group chats. ' . $languageInstruction . $windowInstruction . ' Keep it concise and capture the main topics. Make list of main topics with short description and links to messages
 
-If Chat Username is provided, create links to messages using the format: https://t.me/[username]/[message_id] where [username] is the Chat Username without @ and [message_id] is a message ID you can reference from the conversation.
+Message format in the conversation includes [ID:X] for message ID and optionally [TID:Y] for topic/thread ID when the group has topics enabled.
 
-If only Chat ID is provided (no username), create link using the format: https://t.me/c/[channel_id]/[message_id] where [channel_id] is a channel ID you can reference from the conversation. Remove -100 from the beginning of the Channel ID if exists.
+For message links:
+- If Chat Username is provided AND NO thread ID [TID:X] exists: https://t.me/[username]/[message_id]
+- If Chat Username is provided AND thread ID [TID:X] exists: https://t.me/[username]/[thread_id]/[message_id]
+- If only Chat ID is provided (no username) AND NO thread ID: https://t.me/c/[channel_id]/[message_id]
+- If only Chat ID is provided AND thread ID [TID:X] exists: https://t.me/c/[channel_id]/[thread_id]/[message_id]
+
+Remove -100 from the beginning of the Channel ID if exists. Always use the thread ID from [TID:X] in the message when available for correct linking in groups with topics.
 
 When formatting your responses for Telegram, please use these special formatting conventions for HTML:
 use only this list of tags, dont use any other html tags
@@ -160,5 +166,69 @@ use HTML for telegram
 <pre><code class="language-python">pre-formatted fixed-width code block written in the Python programming language</code></pre>
 <blockquote>Block quotation started\nBlock quotation continued\nThe last line of the block quotation</blockquote>
 <blockquote expandable>Expandable block quotation started\nExpandable block quotation continued\nExpandable block quotation continued\nHidden by default part of the block quotation started\nExpandable block quotation continued\nThe last line of the block quotation</blockquote>';
+    }
+
+    /**
+     * Build a system prompt for JSON-structured chat summary
+     *
+     * @param string $language The language to use (e.g., 'en', 'ru')
+     * @return string The built system prompt
+     */
+    public function buildSummaryJsonSystemPrompt(string $language): string
+    {
+        $languageInstruction = ($language === 'ru')
+            ? "Generate all text content in Russian language."
+            : "Generate all text content in English language.";
+
+        return "You are a helpful assistant that analyzes and summarizes Telegram group chats. {$languageInstruction}
+
+Your task is to analyze the conversation and extract structured data in JSON format. You must:
+
+1. Identify the main discussion topics (3-6 topics typically)
+2. Calculate statistics for the most active users (top 5-10 users)
+3. Calculate total chat statistics
+
+Message format in the conversation includes [ID:X] for message ID and optionally [TID:Y] for topic/thread ID when the group has topics enabled.
+
+For message links:
+- If Chat Username is provided AND NO thread ID [TID:X] exists: https://t.me/[username]/[message_id]
+- If Chat Username is provided AND thread ID [TID:X] exists: https://t.me/[username]/[thread_id]/[message_id]
+- If only Chat ID is provided (no username) AND NO thread ID: https://t.me/c/[channel_id]/[message_id]
+- If only Chat ID is provided AND thread ID [TID:X] exists: https://t.me/c/[channel_id]/[thread_id]/[message_id]
+
+Remove -100 from the beginning of the Channel ID if exists. Always use the thread ID from [TID:X] in the message when available for correct linking in groups with topics.
+
+Be accurate with statistics. Count actual messages, words, and characters from the conversation data provided.";
+    }
+
+    /**
+     * Build a user prompt for JSON-structured chat summary
+     *
+     * @param array $messages Array of messages to summarize
+     * @param string $language The language to use (e.g., 'en', 'ru')
+     * @param string|null $chatInfo Optional chat information
+     * @param string|null $windowLabel Optional time window label
+     * @return string The built prompt
+     */
+    public function buildSummaryJsonPrompt(array $messages, string $language, ?string $chatInfo = null, ?string $windowLabel = null): string
+    {
+        $timeWindow = $windowLabel ?? 'Last 24 Hours, UTC';
+
+        $prompt = "Analyze the following Telegram group chat conversation and provide a structured JSON summary.\n\n";
+
+        if (!empty($chatInfo)) {
+            $prompt .= "Chat Information:\n{$chatInfo}\n";
+        }
+
+        $prompt .= "Time Window: {$timeWindow}\n\n";
+        $prompt .= "Instructions:\n";
+        $prompt .= "- Extract 3-6 main discussion topics with brief descriptions\n";
+        $prompt .= "- For each topic, include relevant message links\n";
+        $prompt .= "- Calculate accurate statistics for the top active users\n";
+        $prompt .= "- Calculate total chat statistics (messages, words, symbols)\n";
+        $prompt .= "- Estimate time spent typing based on ~40 words per minute typing speed\n\n";
+        $prompt .= "Conversation:\n" . implode("\n", $messages);
+
+        return $prompt;
     }
 }

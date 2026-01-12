@@ -14,17 +14,20 @@ class BotMentionHandler
     private SettingsService $settingsService;
     private MessageStorage $messageStorage;
     private LoggerService $logger;
+    private TelegramReactionService $reactionService;
 
     public function __construct(
         AIService $aiService,
         SettingsService $settingsService,
         MessageStorage $messageStorage,
-        LoggerService $logger
+        LoggerService $logger,
+        TelegramReactionService $reactionService
     ) {
         $this->aiService = $aiService;
         $this->settingsService = $settingsService;
         $this->messageStorage = $messageStorage;
         $this->logger = $logger;
+        $this->reactionService = $reactionService;
     }
 
     /**
@@ -89,36 +92,92 @@ class BotMentionHandler
         // Use AI service for responses with added context
         $response = $this->generateMentionResponse($messageText, $username, $chatContext, $inputImageUrl, $chatId, $isReplyToBot);
 
+        $reactEnabled = $this->settingsService->getSetting($chatId, 'bot_mentions_react_when_no_reply', true);
+        if ($reactEnabled) {
+            // Ask flash model if we should react and which emoji
+            $decision = $this->aiService->getReactionDecision($messageText, $username, $chatContext, $chatId);
+
+            $minConfidence = (int)$this->settingsService->getSetting($chatId, 'bot_mentions_reaction_min_confidence', 60);
+            $allowAiEmoji = (bool)$this->settingsService->getSetting($chatId, 'bot_mentions_reaction_allow_ai_emoji', true);
+            $allowBig = (bool)$this->settingsService->getSetting($chatId, 'bot_mentions_reaction_allow_big', false);
+
+            if (is_array($decision)) {
+                $this->logger->logBotMention("Reaction decision: " . json_encode($decision));
+                $shouldReact = (bool)($decision['should_react'] ?? false);
+                $confidence = (int)($decision['confidence'] ?? 0);
+                if ($shouldReact && $confidence >= $minConfidence) {
+                    $emoji = (string)$this->settingsService->getSetting($chatId, 'bot_mentions_reaction_emoji', '👍');
+                    if ($allowAiEmoji && !empty($decision['emoji'])) {
+                        $candidate = (string)$decision['emoji'];
+                        if ($this->isValidEmoji($candidate)) {
+                            $emoji = $candidate;
+                        }
+                    }
+                    $isBig = (bool)$this->settingsService->getSetting($chatId, 'bot_mentions_reaction_big', false);
+                    if ($allowBig && isset($decision['is_big'])) {
+                        $isBig = (bool)$decision['is_big'];
+                    }
+
+                    $ok = $this->reactionService->sendReaction($chatId, $replyToMessageId, $emoji, $isBig);
+                    if ($ok) {
+                        $this->logger->logBotMention("Added reaction '{$emoji}' (big=" . ($isBig ? 'true' : 'false') . ") instead of replying in chat {$chatId}");
+                    }
+                    $this->logger->logBotMention("Failed to add reaction '{$emoji}' in chat {$chatId}");
+                } else {
+                    $this->logger->logBotMention("Skip reaction: should_react=" . ($shouldReact ? 'true' : 'false') . ", confidence={$confidence}, min={$minConfidence}");
+                }
+            } else {
+                $this->logger->logBotMention("Reaction decision unavailable or invalid; skipping reaction");
+            }
+        } else {
+            $this->logger->logBotMention("Reaction on no-reply disabled for chat {$chatId}");
+        }
+
         if ($response) {
             // Check if this is a text or image response
             if ($response['type'] === 'text') {
                 // Send text response
-                $sendResult = Request::sendMessage([
+                $params = [
                     'chat_id' => $chatId,
                     'text' => $response['content'],
                     'reply_to_message_id' => $replyToMessageId,
-                ]);
+                ];
+                $threadId = $this->settingsService->getSetting($chatId, 'message_thread_id', null);
+                if ($threadId !== null) {
+                    $params['message_thread_id'] = (int)$threadId;
+                }
+                $sendResult = Request::sendMessage($params);
 
                 if ($sendResult->isOk()) {
                     $this->logger->logBotMention('Send ok');
                 } else {
-                    $sendResult = Request::sendMessage([
+                    $retryParams = [
                         'chat_id' => $chatId,
                         'text' => strip_tags($response['content']),
                         'reply_to_message_id' => $replyToMessageId,
-                    ]);
+                    ];
+                    $threadId = $this->settingsService->getSetting($chatId, 'message_thread_id', null);
+                    if ($threadId !== null) {
+                        $retryParams['message_thread_id'] = (int)$threadId;
+                    }
+                    $sendResult = Request::sendMessage($retryParams);
                     $this->logger->logBotMention('resend with strip tags, TG exception');
                 }
 
                 $responseType = 'text';
             } else if ($response['type'] === 'image' && !empty($response['image_url'])) {
                 // Send image response with caption
-                $sendResult = Request::sendPhoto([
+                $photoParams = [
                     'chat_id' => $chatId,
                     'photo' => $response['image_url'],
                     'caption' => $response['content'] ?? null, // Use content if available
                     'reply_to_message_id' => $replyToMessageId
-                ]);
+                ];
+                $threadId = $this->settingsService->getSetting($chatId, 'message_thread_id', null);
+                if ($threadId !== null) {
+                    $photoParams['message_thread_id'] = (int)$threadId;
+                }
+                $sendResult = Request::sendPhoto($photoParams);
 
                 $responseType = 'image';
 
@@ -194,5 +253,17 @@ class BotMentionHandler
         // Determine if the provided image is a base64 data URI
         $isBase64 = is_string($inputImageUrl) && str_starts_with($inputImageUrl, 'data:image/');
         return $this->aiService->generateMentionResponse($messageText, $username, $chatContext, $inputImageUrl, $isBase64, $chatId, $isReplyToBot);
+    }
+
+    // Very conservative emoji validator (single grapheme cluster)
+    private function isValidEmoji(string $emoji): bool
+    {
+        $emoji = trim($emoji);
+        if ($emoji === '') return false;
+        // Quick allow for common single emojis length <= 8 bytes
+        if (strlen($emoji) > 16) return false;
+        // Disallow obvious non-emoji patterns like :thumbs_up:
+        if (str_contains($emoji, ':')) return false;
+        return true;
     }
 }

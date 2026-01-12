@@ -17,6 +17,8 @@ class WebhookProcessor
     private LoggerService $logger;
     private AIService $aiService;
     private AntiSpamHandler $antiSpamHandler;
+    private NewUserRestrictionService $newUserRestrictionService;
+    private SettingsService $settingsService;
     private array $config;
     private string $botUsername;
 
@@ -27,6 +29,8 @@ class WebhookProcessor
         LoggerService $logger,
         AIService $aiService,
         AntiSpamHandler $antiSpamHandler,
+        NewUserRestrictionService $newUserRestrictionService,
+        SettingsService $settingsService,
         array $config,
         string $botUsername
     ) {
@@ -35,6 +39,8 @@ class WebhookProcessor
         $this->commandHandler = $commandHandler;
         $this->logger = $logger;
         $this->antiSpamHandler = $antiSpamHandler;
+        $this->newUserRestrictionService = $newUserRestrictionService;
+        $this->settingsService = $settingsService;
         $this->config = $config;
         $this->botUsername = $botUsername;
         $this->aiService = $aiService;
@@ -59,6 +65,18 @@ class WebhookProcessor
             // Create an Update object from the JSON data
             $update = new Update($update, $this->botUsername);
 
+            // Handle callback queries first (inline buttons)
+            $callback = $update->getCallbackQuery();
+            if ($callback) {
+                $data = (string)$callback->getData();
+                if (strpos($data, 'vote|') === 0) {
+                    // Handle vote callbacks immediately, before any thread/topic restrictions
+                    $this->logger->logWebhook('Processing vote callback early (bypass thread check): ' . $data);
+                    $this->commandHandler->handleVoteCallback($callback);
+                    return;
+                }
+            }
+
             // Check for duplicate updates
             if ($this->hasDuplicateUpdate($update->getUpdateId())) {
                 $this->logger->log(
@@ -66,6 +84,21 @@ class WebhookProcessor
                     'Duplicate Update'
                 );
                 return;
+            }
+
+            // Handle new members joining
+            $message = $update->getMessage();
+            if ($message) {
+                $newChatMembers = $message->getNewChatMembers();
+                if ($newChatMembers && !empty($newChatMembers)) {
+                    $chatId = $message->getChat()->getId();
+                    foreach ($newChatMembers as $member) {
+                        $userId = $member->getId();
+                        $username = $member->getUsername() ?? $member->getFirstName() ?? "User";
+                        $this->logger->log("New member joined: {$username} (ID: {$userId}) in chat {$chatId}", "NewMember");
+                        $this->newUserRestrictionService->handleNewMember($chatId, $userId, $username);
+                    }
+                }
             }
 
             // Check if this is a new message or an edited message
@@ -87,12 +120,63 @@ class WebhookProcessor
                 $userId = $message->getFrom()->getId();
                 $username = $message->getFrom()->getUsername() ?? $message->getFrom()->getFirstName();
                 $messageId = $message->getMessageId();
+                $messageThreadId = $message->getMessageThreadId();
+
+                // Thread restriction mode:
+                // - Always record messages to history for summary (across all topics)
+                // - Only react to bot mentions and non-vote commands inside the configured topic/thread
+                // - EXCEPTION: vote moderation commands are handled later and are allowed in ANY topic
+                $configuredThreadId = $this->settingsService->getSetting($chatId, 'message_thread_id', null);
+                $allowInteractionsInThisThread = !($configuredThreadId !== null && $configuredThreadId !== $messageThreadId); // mentions + regular commands only
 
                 // Get photos from the message if any
                 $photos = $message->getPhoto();
 
                 // Get caption if available (for photos)
                 $caption = $message->getCaption();
+
+                // Check new user restrictions first (before spam check)
+                $textToCheck = $messageText ?: $caption;
+                if ($textToCheck) {
+                    // First, try to handle as captcha answer
+                    $handledAsCaptcha = $this->newUserRestrictionService->handlePotentialCaptchaAnswer(
+                        $chatId,
+                        $userId,
+                        $textToCheck,
+                        $messageId
+                    );
+
+                    if ($handledAsCaptcha) {
+                        $this->logger->log("Message from user {$userId} was handled as captcha answer", "NewUserRestriction");
+                        return; // Stop processing if it was a captcha answer
+                    }
+
+                    // Check if user is allowed to send messages
+                    $allowedCheck = $this->newUserRestrictionService->checkUserAllowed($chatId, $userId, $messageId, $username);
+                    if (!$allowedCheck['allowed']) {
+                        $this->logger->log(
+                            "User {$username} (ID: {$userId}) is restricted, deleting message",
+                            "NewUserRestriction"
+                        );
+
+                        if ($allowedCheck['reason'] === 'waiting_period') {
+                            $this->newUserRestrictionService->deleteMessageAndWarn(
+                                $chatId,
+                                $userId,
+                                $messageId,
+                                $allowedCheck['remaining_minutes']
+                            );
+                        } elseif ($allowedCheck['reason'] === 'pending_captcha') {
+                            // Delete the message silently (they need to answer captcha)
+                            Request::deleteMessage([
+                                'chat_id' => $chatId,
+                                'message_id' => $messageId
+                            ]);
+                        }
+
+                        return; // Stop further processing
+                    }
+                }
 
                 // Check for spam in text messages
                 if ($messageText) {
@@ -111,7 +195,7 @@ class WebhookProcessor
                 if ($messageText || $photos) {
                     // Process and store text message (only if there are no photos)
                     if ($messageText && empty($photos)) {
-                        $this->messageStorage->storeMessage($chatId, $timestamp, $username, $messageText, $messageId);
+                        $this->messageStorage->storeMessage($chatId, $timestamp, $username, $messageText, $messageId, $messageThreadId);
                     }
 
                     // Process images if present
@@ -122,7 +206,9 @@ class WebhookProcessor
 
                     // Only process mentions for new messages, not edited ones
                     // Only process mentions for non-command messages
+                    // Only inside the configured topic/thread (if set)
                     if (!$isEditedMessage &&
+                        $allowInteractionsInThisThread &&
                         !str_starts_with($messageText, '/summary') &&
                         !str_starts_with($messageText, '/mcp') &&
                         !str_starts_with($messageText, '/settings')) {
@@ -170,9 +256,13 @@ class WebhookProcessor
                 $messageId = $message->getMessageId();
 
                 $messageText = $message->getText(false);
+                $messageThreadId = $message->getMessageThreadId();
+                // Respect thread restriction for commands as well (except vote moderation commands)
+                $configuredThreadId = $this->settingsService->getSetting($chatId, 'message_thread_id', null);
+                $allowInteractionsInThisThread = !($configuredThreadId !== null && $configuredThreadId !== $messageThreadId);
 
-                // Handle /summary command
-                if (str_starts_with($messageText, '/summary')) {
+                // Handle /summary command (only in allowed thread)
+                if ($allowInteractionsInThisThread && str_starts_with($messageText, '/summary')) {
                     // Extract optional time window parameters after the command
                     $params = trim(substr($messageText, 8));
                     $this->logger->logWebhook(
@@ -182,8 +272,8 @@ class WebhookProcessor
                     $this->commandHandler->handleSummaryCommand($chatId, $params, $messageId);
                 }
 
-                // Handle /mcp command
-                if (str_starts_with($messageText, '/mcp')) {
+                // Handle /mcp command (only in allowed thread)
+                if ($allowInteractionsInThisThread && str_starts_with($messageText, '/mcp')) {
                     // Extract the query part after the command
                     $query = trim(substr($messageText, 4));
 
@@ -198,8 +288,8 @@ class WebhookProcessor
                     $this->commandHandler->handleMCPCommand($chatId, $query, $fromUser, $messageId, $userId);
                 }
 
-                // Handle /settings command
-                if (str_starts_with($messageText, '/settings')) {
+                // Handle /settings command (only in allowed thread)
+                if ($allowInteractionsInThisThread && str_starts_with($messageText, '/settings')) {
                     // Extract the parameters part after the command
                     $params = trim(substr($messageText, 9));
 
@@ -211,16 +301,34 @@ class WebhookProcessor
                     $this->commandHandler->handleSettingsCommand($chatId, $params, $fromUser, $messageId, $message);
                 }
 
-                // Handle /help command
-                if (str_starts_with($messageText, '/help')) {
+                // Handle /help command (only in allowed thread)
+                if ($allowInteractionsInThisThread && str_starts_with($messageText, '/help')) {
                     $this->logger->logWebhook(
                         "Received /help command in chat {$chatId} ({$chatTitle}) from user {$fromUser}"
                     );
                     $this->commandHandler->handleHelpCommand($chatId, $messageId);
                 }
 
-                // Handle /account command
-                if (str_starts_with($messageText, '/account')) {
+                // Community moderation via voting
+                if (str_starts_with($messageText, '/voteban')) {
+                    $this->logger->logWebhook("Received /voteban in chat {$chatId} ({$chatTitle}) from {$fromUser}");
+                    $this->commandHandler->handleVoteStartCommand($chatId, $message, 'ban');
+                }
+                if (str_starts_with($messageText, '/votekick') || str_starts_with($messageText, '/votemute')) {
+                    $this->logger->logWebhook("Received vote mute/kick in chat {$chatId} ({$chatTitle}) from {$fromUser}");
+                    $this->commandHandler->handleVoteStartCommand($chatId, $message, 'mute');
+                }
+                if (str_starts_with($messageText, '/yes')) {
+                    $this->logger->logWebhook("Received /yes vote in chat {$chatId} ({$chatTitle}) from {$fromUser}");
+                    $this->commandHandler->handleVoteResponseCommand($chatId, $message, true);
+                }
+                if (str_starts_with($messageText, '/no')) {
+                    $this->logger->logWebhook("Received /no vote in chat {$chatId} ({$chatTitle}) from {$fromUser}");
+                    $this->commandHandler->handleVoteResponseCommand($chatId, $message, false);
+                }
+
+                // Handle /account command (only in allowed thread)
+                if ($allowInteractionsInThisThread && str_starts_with($messageText, '/account')) {
                     // Extract the account identifier part after the command
                     $accountIdentifier = trim(substr($messageText, 8));
 
@@ -355,6 +463,30 @@ class WebhookProcessor
     private function processBotMention(int $chatId, string $textToUse, string $username, int $messageId, $photos = null, ?array $imageDescription = null, bool $isReplyToBot = false): void
     {
         $this->mentionHandler->handleBotMention($chatId, $textToUse, $username, $messageId, $photos, $imageDescription, $isReplyToBot);
+    }
+
+    /**
+     * Build a link to a forum topic in a supergroup
+     */
+    private function buildTopicLink(int $chatId, int $topicId): ?string
+    {
+        try {
+            // For private supergroups, use t.me/c/<internal_id>/<topic_id>
+            // chatId is like -1001234567890, internal id is 1234567890
+            $chatIdStr = (string)$chatId;
+            if (str_starts_with($chatIdStr, '-100')) {
+                $internal = substr($chatIdStr, 4);
+            } else {
+                $internal = ltrim($chatIdStr, '-');
+            }
+            if (!ctype_digit($internal)) {
+                return null;
+            }
+            return "https://t.me/c/{$internal}/{$topicId}";
+        } catch (\Throwable $e) {
+            $this->logger->logError('Failed to build topic link: ' . $e->getMessage(), 'Topic Link');
+            return null;
+        }
     }
 
     /**
