@@ -8,6 +8,7 @@ use NeuronAI\Tools\PropertyType;
 use NeuronAI\Tools\Tool;
 use NeuronAI\Tools\ToolProperty;
 use ClickHouseDB\Client as ClickHouseClient;
+use GuzzleHttp\Client as HttpClient;
 
 class ClickhouseAgent extends Agent
 {
@@ -21,10 +22,67 @@ class ClickhouseAgent extends Agent
      */
     private const MAX_TOKENS = 50000;
 
+    /**
+     * Statbate API base URL and token
+     */
+    private const STATBATE_API_URL = 'https://plus.statbate.com/api';
+    private const STATBATE_API_TOKEN = 'apollo-secret-api-user-76543132456';
+
+    /**
+     * Chat action sender for status updates
+     */
+    private static ?int $chatId = null;
+    private static ?int $threadId = null;
+    private static ?TelegramSender $sender = null;
+    private static int $lastActionTime = 0;
+
+    /**
+     * Chat actions to cycle through for visual variety
+     */
+    private const CHAT_ACTIONS = ['typing', 'upload_document', 'find_location', 'record_video', 'choose_sticker'];
+
     public function __construct(array $config = [], bool $hasActiveSubscription = false)
     {
         self::$config = $config;
         $this->hasActiveSubscription = $hasActiveSubscription;
+    }
+
+    /**
+     * Set chat action sender for status updates during long operations
+     */
+    public static function setChatActionSender(?int $chatId, ?TelegramSender $sender, ?int $threadId = null): void
+    {
+        self::$chatId = $chatId;
+        self::$sender = $sender;
+        self::$threadId = $threadId;
+        self::$lastActionTime = 0;
+    }
+
+    /**
+     * Send a chat action if enough time has passed (every 2 seconds)
+     */
+    private static function sendChatAction(): void
+    {
+        if (self::$chatId === null || self::$sender === null) {
+            return;
+        }
+
+        $now = time();
+        if ($now - self::$lastActionTime < 2) {
+            return;
+        }
+
+        self::$lastActionTime = $now;
+
+        // Cycle through different actions for visual variety
+        $actionIndex = (int)(($now / 2) % count(self::CHAT_ACTIONS));
+        $action = self::CHAT_ACTIONS[$actionIndex];
+
+        try {
+            self::$sender->sendChatAction(self::$chatId, $action, self::$threadId);
+        } catch (\Exception $e) {
+            // Ignore chat action failures
+        }
     }
 
 
@@ -295,15 +353,40 @@ class ClickhouseAgent extends Agent
             Answer in English always if user not asked you in different language.
             Current time: " . date('H:i:s') . ".
             Current date: " . date('Y-m-d') . ".
+
+            IMPORTANT: PREFER using call_statbate_api tool for these common queries (faster and more reliable):
+            - Member/donator info, tips, activity, top models: use call_statbate_api with endpoint like /members/{site}/{name}/info
+            - Model/room info, tips, members, activity: use call_statbate_api with endpoint like /model/{site}/{name}/info
+            - Only use run_select_query for complex custom queries NOT covered by the API
+
+            Available API endpoints (use call_statbate_api):
+            MEMBER endpoints (donators/tippers):
+            - /members/{site}/{name}/info - Stats: total tips, first/last seen, top models
+            - /members/{site}/{name}/tips - Tip history (supports: page, per_page, from, to, model, min_amount, max_amount)
+            - /members/{site}/{name}/top-models - Top tipped models (supports: from, to)
+            - /members/{site}/{name}/activity - Activity timeline (supports: from, to)
+            - /members/{site}/{name}/tag-spending - Spending by room tags (supports: page, per_page, from, to)
+            - /members/{site}/{name}/model-spending/{model} - Spending on specific model (supports: from, to)
+
+            MODEL endpoints (streamers/performers):
+            - /model/{site}/{name}/info - Stats: total earnings, followers, top tippers (supports: from, to)
+            - /model/{site}/{name}/tips - Tip history (supports: page, per_page, from, to)
+            - /model/{site}/{name}/members - Top tipping members (supports: from, to)
+            - /model/{site}/{name}/activity - Sessions/activity (supports: from, to)
+            - /model/{site}/{name}/rank - Ranking history (supports: from, to)
+
+            Common params: timezone (e.g. Europe/Bucharest), from/to (Y-m-d dates), page, per_page (max 200)
+            Sites: chaturbate, stripchat, bongacams, camsoda, mfc
+
             Database is clickhouse version 24.10.2.80
             database definition for clickhouse: " . self::$config['clickhouse_db_definition'] . "
             logs_v2 table available but for requests not more than 1 day
             room_activity each record is 1 minute but must be grouped, can contain duplicated records.
-            Databases available: statbate, stripchat, camsoda, bongacams, mfc. Statbate database is chaturbate actually or CB
-            By default use statbate database unless otherwise specified.
+            Databases available: chaturbate, stripchat, camsoda, bongacams, mfc
+            By default use chaturbate database unless otherwise specified.
             DONT MAKE SUMMARIES OF THE ENTIRE DATABASE OR ANYTHING ELSE THAT IS NOT REQUESTED IN THE MESSAGE!" .
             $timeLimitInstructions . "
-            By default use statbate database unless otherwise specified.
+            By default use chaturbate database unless otherwise specified.
             all queries must include database name
             Data in database stored in UTC timezone.
             Rooms gender mapping: 0=Male, 1=Female, 2=Trans, 3=Couple.
@@ -332,7 +415,7 @@ class ClickhouseAgent extends Agent
             Tool::make(
                 'list_databases',
                 'List available ClickHouse databases.',
-            )->addProperty(
+            )->setMaxTries(10)->addProperty(
                 new ToolProperty(
                     name: 'test',
                     type: PropertyType::STRING,
@@ -340,6 +423,7 @@ class ClickhouseAgent extends Agent
                     required: false
                 )
             )->setCallable(function () {
+                self::sendChatAction();
                 $logPrefix = "[" . date('Y-m-d H:i:s') . "] [tool call] ";
                 $webhookLogFile = self::$config['log_path'] . '/webhook_' . date('Y-m-d') . '.log';
 
@@ -358,13 +442,14 @@ class ClickhouseAgent extends Agent
                 file_put_contents($webhookLogFile, $logMessage . PHP_EOL, FILE_APPEND);
 
                 $this->toolCalls++;
+                self::sendChatAction();
                 return json_encode(['databases' => $result, 'toolCalls' => $this->toolCalls]);
             }),
 
             Tool::make(
                 'list_tables',
                 'List available ClickHouse tables in a database, including schema, comment, row count, and column count.',
-            )->addProperty(
+            )->setMaxTries(10)->addProperty(
                 new ToolProperty(
                     name: 'database',
                     type: PropertyType::STRING,
@@ -379,6 +464,7 @@ class ClickhouseAgent extends Agent
                     required: false
                 )
             )->setCallable(function (string $database, ?string $like = null) {
+                self::sendChatAction();
                 $this->toolCalls++;
 
                 $clickhouse = new ClickHouseClient([
@@ -477,7 +563,7 @@ class ClickhouseAgent extends Agent
             Tool::make(
                 'run_select_query',
                 'Run a SELECT query in a ClickHouse database',
-            )->addProperty(
+            )->setMaxTries(10)->addProperty(
                 new ToolProperty(
                     name: 'query',
                     type: PropertyType::STRING,
@@ -485,6 +571,7 @@ class ClickhouseAgent extends Agent
                     required: true
                 )
             )->setCallable(function (string $query) {
+                self::sendChatAction();
                 $this->toolCalls++;
 
                 $logPrefix = "[" . date('Y-m-d H:i:s') . "] [tool call] ";
@@ -495,6 +582,7 @@ class ClickhouseAgent extends Agent
                 file_put_contents($webhookLogFile, $logMessage . PHP_EOL, FILE_APPEND);
 
                 try {
+                    self::sendChatAction();
                     // Validate that this is a SELECT query for safety
 //                    $trimmedQuery = trim($query);
 //                    if (!preg_match('/^SELECT\s/i', $trimmedQuery) && !preg_match('/^with\s/i', $trimmedQuery)) {
@@ -577,6 +665,146 @@ class ClickhouseAgent extends Agent
                         'toolCalls' => $this->toolCalls,
                         'status' => 'error',
                         'message' => 'Query failed: ' . $e->getMessage()
+                    ]);
+                }
+            }),
+
+            Tool::make(
+                'call_statbate_api',
+                'Call the Statbate API for stable, optimized data queries. PREFERRED over raw ClickHouse for member/model info, tips, activity.',
+            )->setMaxTries(1000)->addProperty(
+                new ToolProperty(
+                    name: 'endpoint',
+                    type: PropertyType::STRING,
+                    description: 'API endpoint path. Sites: chaturbate, stripchat, bongacams, camsoda, mfc. ' .
+                        'Member endpoints: /members/{site}/{name}/info (stats), /members/{site}/{name}/tips (tip history), ' .
+                        '/members/{site}/{name}/top-models (top tipped), /members/{site}/{name}/activity (timeline), ' .
+                        '/members/{site}/{name}/tag-spending (spending by tag), /members/{site}/{name}/model-spending/{model} (spending on specific model). ' .
+                        'Model endpoints: /model/{site}/{name}/info (stats), /model/{site}/{name}/tips (tip history), ' .
+                        '/model/{site}/{name}/members (top tippers), /model/{site}/{name}/activity (sessions), /model/{site}/{name}/rank (ranking history).',
+                    required: true
+                )
+            )->addProperty(
+                new ToolProperty(
+                    name: 'params',
+                    type: PropertyType::STRING,
+                    description: 'Query parameters as JSON string. Available params: ' .
+                        'timezone (string, e.g. "Europe/Bucharest" - affects date formatting in response), ' .
+                        'from (string Y-m-d, start date filter), to (string Y-m-d, end date filter), ' .
+                        'page (int, pagination page number starting from 1), per_page (int, items per page, max 200), ' .
+                        'model (string, filter tips by model name - for member tips endpoint), ' .
+                        'min_amount (int, minimum tip amount filter), max_amount (int, maximum tip amount filter). ' .
+                        'Example: {"from": "2024-01-01", "to": "2024-01-31", "page": 1, "per_page": 50, "timezone": "UTC"}',
+                    required: false
+                )
+            )->setCallable(function (string $endpoint, ?string $params = null) {
+                self::sendChatAction();
+                $this->toolCalls++;
+
+                $logPrefix = "[" . date('Y-m-d H:i:s') . "] [api call] ";
+                $webhookLogFile = self::$config['log_path'] . '/webhook_' . date('Y-m-d') . '.log';
+
+                // Parse params if provided
+                $queryParams = [];
+                if ($params) {
+                    $decoded = json_decode($params, true);
+                    if (is_array($decoded)) {
+                        $queryParams = $decoded;
+                    }
+                }
+
+                // Apply date limit for non-subscribers (30 days)
+                if (!$this->hasActiveSubscription) {
+                    $minDate = date('Y-m-d', strtotime('-30 days'));
+                    // Override 'from' param if not set or older than 30 days
+                    if (!isset($queryParams['from']) || $queryParams['from'] < $minDate) {
+                        $queryParams['from'] = $minDate;
+                    }
+                }
+
+                // Build full URL
+                $url = self::STATBATE_API_URL . '/' . ltrim($endpoint, '/');
+                if (!empty($queryParams)) {
+                    $url .= '?' . http_build_query($queryParams);
+                }
+
+                $logMessage = $logPrefix . "Calling Statbate API: " . $url . PHP_EOL;
+                file_put_contents($webhookLogFile, $logMessage, FILE_APPEND);
+
+                self::sendChatAction();
+                try {
+                    $client = new HttpClient([
+                        'timeout' => 30,
+                        'verify' => false, // Skip SSL verification for internal API
+                    ]);
+
+                    $response = $client->get($url, [
+                        'headers' => [
+                            'Authorization' => 'Bearer ' . self::STATBATE_API_TOKEN,
+                            'Accept' => 'application/json',
+                            'X-Account-Identifier' => self::STATBATE_API_TOKEN,
+                        ],
+                    ]);
+
+                    $body = $response->getBody()->getContents();
+                    $data = json_decode($body, true);
+
+                    // Calculate token count and truncate if needed
+                    $tokenCount = $this->estimateTokenCount($body);
+
+                    $logMessage = $logPrefix . "API response (approx. $tokenCount tokens): " . mb_substr($body, 0, 500) . (strlen($body) > 500 ? '...' : '') . PHP_EOL;
+                    file_put_contents($webhookLogFile, $logMessage . PHP_EOL, FILE_APPEND);
+
+                    // Truncate if too large
+                    if ($tokenCount > self::MAX_TOKENS && is_array($data)) {
+                        $logMessage = $logPrefix . "Token count exceeded limit ($tokenCount > " . self::MAX_TOKENS . "). Truncating API results." . PHP_EOL;
+                        file_put_contents($webhookLogFile, $logMessage, FILE_APPEND);
+
+                        // If data has a 'data' key with array, truncate that
+                        if (isset($data['data']) && is_array($data['data'])) {
+                            $data['data'] = $this->truncateResultsToTokenLimit($data['data'], self::MAX_TOKENS - 1000);
+                            $data['_truncated'] = true;
+                        }
+                    }
+
+                    $data['toolCalls'] = $this->toolCalls;
+                    $data['_source'] = 'statbate_api';
+
+                    return json_encode($data);
+
+                } catch (\GuzzleHttp\Exception\ClientException $e) {
+                    $statusCode = $e->getResponse()->getStatusCode();
+                    $errorBody = $e->getResponse()->getBody()->getContents();
+
+                    $logMessage = $logPrefix . "API error ($statusCode): " . $errorBody . PHP_EOL;
+                    file_put_contents($webhookLogFile, $logMessage . PHP_EOL, FILE_APPEND);
+
+                    // If 404, entity not found - suggest using ClickHouse directly
+                    if ($statusCode === 404) {
+                        return json_encode([
+                            'toolCalls' => $this->toolCalls,
+                            'status' => 'not_found',
+                            'message' => 'Entity not found via API. Try using run_select_query to search in ClickHouse directly.',
+                            '_source' => 'statbate_api'
+                        ]);
+                    }
+
+                    return json_encode([
+                        'toolCalls' => $this->toolCalls,
+                        'status' => 'error',
+                        'message' => "API error ($statusCode): " . $errorBody,
+                        '_source' => 'statbate_api'
+                    ]);
+
+                } catch (\Exception $e) {
+                    $logMessage = $logPrefix . "API exception: " . $e->getMessage() . PHP_EOL;
+                    file_put_contents($webhookLogFile, $logMessage . PHP_EOL, FILE_APPEND);
+
+                    return json_encode([
+                        'toolCalls' => $this->toolCalls,
+                        'status' => 'error',
+                        'message' => 'API call failed: ' . $e->getMessage() . '. Try using run_select_query instead.',
+                        '_source' => 'statbate_api'
                     ]);
                 }
             })

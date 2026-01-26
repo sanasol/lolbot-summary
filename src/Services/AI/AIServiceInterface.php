@@ -14,11 +14,14 @@ interface AIServiceInterface
      * @param string $username The username of the message sender
      * @param string $chatContext Optional context from recent chat messages
      * @param int|null $userId The user ID for checking subscription status
+     * @param int|null $chatId The chat ID for sending status updates
+     * @param \App\Services\TelegramSender|null $sender The Telegram sender for chat actions
+     * @param int|null $threadId The message thread ID for forum topics
      * @return array The generated response.
      *              Format: ['type' => 'text', 'content' => string, 'tool_calls' => array|null]
      *              Or error: ['type' => 'error', 'content' => string, 'error_type' => string]
      */
-    public function generateMCPResponse(string $messageText, string $username, string $chatContext = '', ?int $userId = null): array;
+    public function generateMCPResponse(string $messageText, string $username, string $chatContext = '', ?int $userId = null, ?int $chatId = null, ?\App\Services\TelegramSender $sender = null, ?int $threadId = null): array;
 
     /**
      * Generate a response for bot mentions

@@ -285,7 +285,7 @@ class WebhookProcessor
                     // Get the user ID for subscription checking
                     $userId = $message->getFrom()->getId();
 
-                    $this->commandHandler->handleMCPCommand($chatId, $query, $fromUser, $messageId, $userId);
+                    $this->commandHandler->handleMCPCommand($chatId, $query, $fromUser, $messageId, $userId, $messageThreadId);
                 }
 
                 // Handle /settings command (only in allowed thread)

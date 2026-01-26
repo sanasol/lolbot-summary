@@ -46,9 +46,9 @@ class TelegramSender
         // 1) Sanitize to safe HTML: drop any tags to avoid malformed entities, then escape
         $textOnly = strip_tags($html);
         $escaped = htmlspecialchars($textOnly, ENT_QUOTES | ENT_SUBSTITUTE, 'UTF-8');
-        // Normalize line breaks into <br/>
+        // Normalize line breaks (Telegram uses \n directly, NOT <br> tags)
         $escaped = preg_replace("/\r\n|\r|\n/", "\n", $escaped);
-        $escapedWithBreaks = nl2br($escaped, false);
+        $escapedWithBreaks = $escaped;
 
         // Guard: avoid empty content which causes Telegram Bad Request
         if (trim($escaped) === '') {
@@ -274,13 +274,20 @@ class TelegramSender
      *
      * @param int $chatId The chat ID
      * @param string $action The action to send
+     * @param int|null $messageThreadId The message thread ID for forum topics
      * @return ServerResponse The response from Telegram
      */
-    public function sendChatAction(int $chatId, string $action = 'typing'): ServerResponse
+    public function sendChatAction(int $chatId, string $action = 'typing', ?int $messageThreadId = null): ServerResponse
     {
-        return Request::sendChatAction([
+        $params = [
             'chat_id' => $chatId,
             'action' => $action
-        ]);
+        ];
+
+        if ($messageThreadId !== null) {
+            $params['message_thread_id'] = $messageThreadId;
+        }
+
+        return Request::sendChatAction($params);
     }
 }

@@ -33,6 +33,7 @@ class PeriodicTaskRunner
         $this->processVotes($now);
         $this->processMutes($now);
         $this->processNewUserRestrictions($now);
+        $this->processLogRotation($now);
     }
 
     private function processVotes(int $now): void
@@ -219,5 +220,82 @@ class PeriodicTaskRunner
             $service->cleanupOldUsers();
             $lastCleanup = $now;
         }
+    }
+
+    /**
+     * Rotate logs - delete files older than 7 days
+     * Runs once per hour
+     */
+    private function processLogRotation(int $now): void
+    {
+        static $lastRotation = 0;
+
+        // Run once per hour (3600 seconds)
+        if ($now - $lastRotation < 3600) {
+            return;
+        }
+        $lastRotation = $now;
+
+        $logger = $this->bot->getLoggerService();
+        $config = $this->bot->getConfig();
+        $dataPath = $config['log_path'] ?? __DIR__ . '/../../data';
+
+        // Files older than 7 days
+        $maxAge = 7 * 24 * 60 * 60;
+        $cutoffTime = $now - $maxAge;
+
+        $deletedCount = 0;
+        $totalSize = 0;
+
+        // Patterns to clean up
+        $patterns = [
+            '*.log',           // All log files
+            'chat_history/*.chat', // Chat history files
+        ];
+
+        foreach ($patterns as $pattern) {
+            $files = glob($dataPath . '/' . $pattern);
+            if ($files === false) {
+                continue;
+            }
+
+            foreach ($files as $file) {
+                if (!is_file($file)) {
+                    continue;
+                }
+
+                $mtime = filemtime($file);
+                if ($mtime !== false && $mtime < $cutoffTime) {
+                    $size = filesize($file);
+                    if (@unlink($file)) {
+                        $deletedCount++;
+                        $totalSize += $size ?: 0;
+                    }
+                }
+            }
+        }
+
+        if ($deletedCount > 0) {
+            $sizeFormatted = $this->formatBytes($totalSize);
+            $logger->log(
+                "Log rotation: deleted {$deletedCount} files older than 7 days ({$sizeFormatted} freed)",
+                "Periodic",
+                "webhook"
+            );
+        }
+    }
+
+    /**
+     * Format bytes to human readable string
+     */
+    private function formatBytes(int $bytes): string
+    {
+        $units = ['B', 'KB', 'MB', 'GB'];
+        $i = 0;
+        while ($bytes >= 1024 && $i < count($units) - 1) {
+            $bytes /= 1024;
+            $i++;
+        }
+        return round($bytes, 2) . ' ' . $units[$i];
     }
 }

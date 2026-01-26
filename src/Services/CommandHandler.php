@@ -264,9 +264,10 @@ class CommandHandler
      * @param string $username The username of the message sender
      * @param int $messageId The message ID to reply to
      * @param int|null $userId The user ID for checking subscription status
+     * @param int|null $threadId The message thread ID for forum topics
      * @return bool Whether the command was handled successfully
      */
-    public function handleMCPCommand(int $chatId, string $messageText, string $username, int $messageId, ?int $userId = null): bool
+    public function handleMCPCommand(int $chatId, string $messageText, string $username, int $messageId, ?int $userId = null, ?int $threadId = null): bool
     {
         try {
             // Log the command
@@ -301,7 +302,7 @@ class CommandHandler
             }
 
             // Generate response using MCP
-            $response = $this->generateMCPResponse($messageText, $username, $chatContext, $userId);
+            $response = $this->generateMCPResponse($messageText, $username, $chatContext, $userId, $chatId, $threadId);
 
             // Check if this is an error response
             if (isset($response['type']) && $response['type'] === 'error') {
@@ -1094,11 +1095,13 @@ class CommandHandler
      * @param string $username The username of the message sender
      * @param string $chatContext Optional context from recent chat messages
      * @param int|null $userId The user ID for checking subscription status
+     * @param int|null $chatId The chat ID for sending status updates
+     * @param int|null $threadId The message thread ID for forum topics
      * @return array The generated response or error information
      */
-    private function generateMCPResponse(string $messageText, string $username, string $chatContext = '', ?int $userId = null): array
+    private function generateMCPResponse(string $messageText, string $username, string $chatContext = '', ?int $userId = null, ?int $chatId = null, ?int $threadId = null): array
     {
-        return $this->aiService->generateMCPResponse($messageText, $username, $chatContext, $userId);
+        return $this->aiService->generateMCPResponse($messageText, $username, $chatContext, $userId, $chatId, $this->sender, $threadId);
     }
 
     /**

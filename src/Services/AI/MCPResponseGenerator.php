@@ -6,6 +6,7 @@ use App\Services\LoggerService;
 use GuzzleHttp\Exception\ClientException;
 use NeuronAI\Exceptions\NeuronException;
 use NeuronAI\Observability\AgentMonitoring;
+use NeuronAI\Chat\History\FileChatHistory;
 use Inspector\Configuration;
 use Inspector\Inspector;
 
@@ -48,7 +49,7 @@ class MCPResponseGenerator
             'DONT QUERY any data before this date',
             'DONT ANSWER questions about before this date',
             'DONT MAKE CLICKHOUSE queries that can use return anything before this date',
-            'By default use statbate database unless otherwise specified',
+            'By default use chaturbate database unless otherwise specified',
             'Data in database stored in UTC timezone',
         ];
 
@@ -144,11 +145,14 @@ class MCPResponseGenerator
      * @param string $username The username of the message sender
      * @param string $chatContext Optional context from recent chat messages
      * @param int|null $userId The user ID for checking subscription status
+     * @param int|null $chatId The chat ID for sending status updates
+     * @param \App\Services\TelegramSender|null $sender The Telegram sender for chat actions
+     * @param int|null $threadId The message thread ID for forum topics
      * @return array The generated response.
      *              Format: ['type' => 'text', 'content' => string, 'tool_calls' => array|null]
      *              Or error: ['type' => 'error', 'content' => string, 'error_type' => string]
      */
-    public function generate(string $messageText, string $username, string $chatContext = '', ?int $userId = null): array
+    public function generate(string $messageText, string $username, string $chatContext = '', ?int $userId = null, ?int $chatId = null, ?\App\Services\TelegramSender $sender = null, ?int $threadId = null): array
     {
         try {
             // Log request
@@ -169,17 +173,56 @@ class MCPResponseGenerator
                 $this->logger->log("User {$userId} subscription status: " . ($hasActiveSubscription ? "Active" : "Inactive"), "MCP Response", "webhook");
             }
 
+            // Set up chat action sender for status updates during long operations
+            if ($chatId !== null && $sender !== null) {
+                \App\Services\ClickhouseAgent::setChatActionSender($chatId, $sender, $threadId);
+            }
+
             // Initialize the ClickhouseAgent
             $agent = \App\Services\ClickhouseAgent::make($this->config, $hasActiveSubscription)
                 ->observe(
                     new AgentMonitoring($inspector)
                 );
 
+            // Set up persistent chat history for group/thread context
+            if ($chatId !== null) {
+                $historyKey = $threadId !== null ? "{$chatId}_{$threadId}" : (string)$chatId;
+                $historyDir = $this->config['log_path'] ?? '/tmp';
+                $chatHistoryDir = $historyDir . '/chat_history';
+
+                // Create directory if it doesn't exist
+                if (!is_dir($chatHistoryDir)) {
+                    @mkdir($chatHistoryDir, 0755, true);
+                }
+
+                if (is_dir($chatHistoryDir)) {
+                    try {
+                        // Use FileChatHistory with 30k token context window to keep history manageable
+                        $chatHistory = new FileChatHistory($chatHistoryDir, $historyKey, 30000, 'mcp_');
+                        $agent->withChatHistory($chatHistory);
+                        $this->logger->log("Using persistent chat history for key: {$historyKey}", "MCP Response", "webhook");
+                    } catch (\Exception $e) {
+                        $this->logger->logError("Failed to initialize chat history: " . $e->getMessage(), "MCP Response", $e);
+                        // Continue without persistent history
+                    }
+                }
+            }
+
+            // Add chat action observer if chat ID and sender provided
+            if ($chatId !== null && $sender !== null) {
+                $chatActionObserver = new \App\Services\ChatActionObserver($chatId, $sender, $threadId);
+                $agent->observe($chatActionObserver);
+            }
+
             // Log that we're sending the message to the agent
             $this->logger->log("Sending message to ClickhouseAgent", "MCP Response", "webhook");
 
             // Get response from the agent
             $response = $agent->chat($userMessage);
+
+            // Clean up chat action sender
+            \App\Services\ClickhouseAgent::setChatActionSender(null, null);
+
             $inspector->flush();
             $content = $response->getContent();
             $usage = $response->getUsage();
