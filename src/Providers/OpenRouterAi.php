@@ -14,7 +14,6 @@ use NeuronAI\Providers\MessageMapperInterface;
 use NeuronAI\Providers\OpenAI\HandleChat;
 use NeuronAI\Providers\OpenAI\HandleStream;
 use NeuronAI\Providers\OpenAI\HandleStructured;
-use NeuronAI\Providers\OpenAI\MessageMapper;
 use NeuronAI\Providers\ToolPayloadMapperInterface;
 use NeuronAI\Tools\ToolInterface;
 
@@ -71,7 +70,8 @@ class OpenRouterAi implements AIProviderInterface
 
     public function messageMapper(): MessageMapperInterface
     {
-        return $this->messageMapper ?? $this->messageMapper = new MessageMapper();
+        // Use custom mapper that strips reasoning_details to prevent API errors when replaying history
+        return $this->messageMapper ?? $this->messageMapper = new OpenRouterMessageMapper();
     }
 
     public function toolPayloadMapper(): ToolPayloadMapperInterface
@@ -127,15 +127,11 @@ class OpenRouterAi implements AIProviderInterface
                     $responseMessage = new \NeuronAI\Chat\Messages\AssistantMessage($msg['content'] ?? '');
                 }
 
-                // Preserve reasoning_details if present (for reasoning models)
-                if (isset($msg['reasoning_details'])) {
-                    $responseMessage->addMetadata('reasoning_details', $msg['reasoning_details']);
-                } elseif (isset($choice['reasoning_details'])) {
-                    $responseMessage->addMetadata('reasoning_details', $choice['reasoning_details']);
-                } elseif (isset($result['reasoning_details'])) {
-                    // Some providers (e.g., Gemini via OpenRouter) may surface reasoning_details at top-level
-                    $responseMessage->addMetadata('reasoning_details', $result['reasoning_details']);
-                }
+                // NOTE: We intentionally do NOT store reasoning_details in metadata.
+                // These contain model-specific encrypted "thought signatures" that cannot
+                // be replayed in subsequent API calls and cause errors like:
+                // - "Thought signature is not valid"
+                // - "function response turn comes immediately after a function call turn"
 
                 if (\array_key_exists('usage', $result)) {
                     $usage = $result['usage'];
@@ -180,10 +176,7 @@ class OpenRouterAi implements AIProviderInterface
         );
 
         $result->addMetadata('tool_calls', $message['tool_calls']);
-        // Preserve reasoning_details so the caller can pass them back unchanged on the next request
-        if (isset($message['reasoning_details'])) {
-            $result->addMetadata('reasoning_details', $message['reasoning_details']);
-        }
+        // NOTE: reasoning_details intentionally NOT stored - see chatAsync() comment
 
         return $result;
     }
