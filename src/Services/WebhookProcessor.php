@@ -259,6 +259,14 @@ class WebhookProcessor
             );
 
             if (!$this->isExplicitCommand($messageText)) {
+                $this->maybeStoreExplicitReplyMemory(
+                    $message,
+                    $chatId,
+                    $userId,
+                    $messageText,
+                    $messageId
+                );
+
                 try {
                     $this->memoryExtractor->maybeExtractFromMessage(
                         $chatId,
@@ -602,6 +610,79 @@ class WebhookProcessor
         array $options = []
     ): void {
         $this->mentionHandler->handleBotMention($chatId, $textToUse, $username, $messageId, $photos, $imageDescription, $isReplyToBot, $options);
+    }
+
+    private function maybeStoreExplicitReplyMemory($message, int $chatId, int $userId, string $messageText, int $messageId): int
+    {
+        if (!$this->interactionRouter->isAddressedToBot($messageText, false)) {
+            return 0;
+        }
+
+        if (!$this->looksLikeExplicitReplyMemoryMarker($messageText)) {
+            return 0;
+        }
+
+        $replyToMessage = $message->getReplyToMessage();
+        if (!$replyToMessage) {
+            return 0;
+        }
+
+        $replyText = trim((string)($replyToMessage->getText(false) ?: ($replyToMessage->getCaption() ?: '')));
+        if ($replyText === '') {
+            return 0;
+        }
+
+        $replyFrom = $replyToMessage->getFrom();
+        $replyUserId = $replyFrom?->getId() ?? $userId;
+        $replyDisplayName = $this->buildDisplayNameFromTelegramUser($replyFrom);
+
+        try {
+            $stored = $this->memoryExtractor->maybeExtractFromMessage(
+                $chatId,
+                $replyUserId,
+                $replyDisplayName,
+                $replyText,
+                $messageId,
+                true,
+                'Another participant explicitly marked this replied message as important for future chat memory. Extract durable low-sensitivity facts from the replied message, not from the marker text.'
+            );
+
+            if ($stored > 0) {
+                return $stored;
+            }
+
+            return $this->memoryExtractor->storeExplicitChatMemoryFromReply($chatId, $userId, $replyText, $messageId);
+        } catch (\Throwable $e) {
+            $this->logger->logError('Explicit reply memory extraction failed: ' . $e->getMessage(), 'MemoryExtractor', $e);
+            return $this->memoryExtractor->storeExplicitChatMemoryFromReply($chatId, $userId, $replyText, $messageId);
+        }
+    }
+
+    private function looksLikeExplicitReplyMemoryMarker(string $messageText): bool
+    {
+        $normalized = mb_strtolower($messageText);
+        $markers = [
+            'запомни',
+            'запомнить',
+            'запоминай',
+            'важная информация',
+            'важная инфа',
+            'важно запомнить',
+            'это важно',
+            'remember this',
+            'remember it',
+            'important info',
+            'important information',
+            'save this',
+        ];
+
+        foreach ($markers as $marker) {
+            if (str_contains($normalized, $marker)) {
+                return true;
+            }
+        }
+
+        return false;
     }
 
     /**

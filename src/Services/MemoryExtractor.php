@@ -32,8 +32,15 @@ class MemoryExtractor
         $this->chatMemoryStore->recordUserSnapshot($chatId, $senderContext, $timestamp);
     }
 
-    public function maybeExtractFromMessage(int $chatId, int $userId, string $username, string $messageText, int $messageId): int
-    {
+    public function maybeExtractFromMessage(
+        int $chatId,
+        int $userId,
+        string $username,
+        string $messageText,
+        int $messageId,
+        bool $forceAnalyze = false,
+        ?string $contextNote = null
+    ): int {
         $messageText = trim($messageText);
         if ($messageText === '' || $this->containsSensitiveContent($messageText)) {
             return 0;
@@ -44,8 +51,13 @@ class MemoryExtractor
             return $stored;
         }
 
-        if (!$this->shouldAnalyze($messageText)) {
+        if (!$forceAnalyze && !$this->shouldAnalyze($messageText)) {
             return $stored;
+        }
+
+        $userContent = "User: {$username}\nMessage: {$messageText}";
+        if ($contextNote !== null && trim($contextNote) !== '') {
+            $userContent .= "\nContext: " . trim($contextNote);
         }
 
         $params = [
@@ -57,7 +69,7 @@ class MemoryExtractor
                 ],
                 [
                     'role' => 'user',
-                    'content' => "User: {$username}\nMessage: {$messageText}",
+                    'content' => $userContent,
                 ],
             ],
             'response_format' => [
@@ -163,6 +175,36 @@ class MemoryExtractor
         return $stored;
     }
 
+    public function storeExplicitChatMemoryFromReply(int $chatId, int $sourceUserId, string $replyText, int $messageId): int
+    {
+        $value = $this->sanitizeExplicitReplyMemoryValue($replyText);
+        if ($value === null) {
+            return 0;
+        }
+
+        $saved = $this->chatMemoryStore->setFact(
+            $chatId,
+            'chat',
+            [
+                'category' => $this->classifyExplicitReplyMemoryCategory($value),
+                'key' => 'important_reply_' . substr(sha1(mb_strtolower($value)), 0, 12),
+                'value' => $value,
+                'confidence' => 0.9,
+                'source_message_id' => $messageId,
+                'source_user_id' => $sourceUserId,
+                'updated_at' => time(),
+                'sensitivity' => 'low',
+            ]
+        );
+
+        if ($saved) {
+            $this->logger->logWebhook("Memory extractor stored explicit replied chat fact for chat {$chatId}, user {$sourceUserId}");
+            return 1;
+        }
+
+        return 0;
+    }
+
     /**
      * @param array<int, array{message_id:int|null, ts:int|null, text:string}> $messages
      */
@@ -254,6 +296,7 @@ class MemoryExtractor
             'Short direct self-facts like "I love hookah" / "я люблю кальян" should be treated as user interest when they are stable enough. ' .
             'Short coarse location statements like "I live in Belgrade" / "я живу в Белграде" may be treated as location with a city-level value only. ' .
             'You may also extract durable facts about role, expertise, background, goals, availability, communication style, language preference, group purpose, and group rules. ' .
+            'When context says another participant explicitly marked a replied message as important memory, extract facts from that replied message; imperative or normative statements may be treated as stable chat rules or recurring requests. ' .
             'Only extract self-reported speaker facts or stable group facts from the current message. Avoid hearsay about other people unless the message is an explicit durable group rule. ' .
             'Use stability=durable for long-term profile facts, stability=medium for useful but somewhat softer facts, and stability=transient for anything that should not be stored. ' .
             'Do not store exact addresses, apartment details, coordinates, or other precise location data. ' .
@@ -540,6 +583,42 @@ class MemoryExtractor
     {
         return $this->extractInterestFact($messageText) !== null
             || $this->extractLocationFact($messageText) !== null;
+    }
+
+    private function sanitizeExplicitReplyMemoryValue(string $replyText): ?string
+    {
+        $value = trim(preg_replace('/\s+/u', ' ', $replyText) ?? $replyText);
+        $value = trim($value, " \t\n\r\0\x0B\"'`«»");
+        if ($value === '' || mb_strlen($value) < 3 || mb_strlen($value) > 280) {
+            return null;
+        }
+
+        if (!$this->containsAlphabeticCharacters($value) || $this->containsSensitiveContent($value)) {
+            return null;
+        }
+
+        return $value;
+    }
+
+    private function classifyExplicitReplyMemoryCategory(string $value): string
+    {
+        $normalized = mb_strtolower($value);
+        $requestPrefixes = [
+            'присылать',
+            'слать',
+            'отправлять',
+            'постить',
+            'send ',
+            'post ',
+        ];
+
+        foreach ($requestPrefixes as $prefix) {
+            if (str_starts_with($normalized, $prefix)) {
+                return 'recurring_request';
+            }
+        }
+
+        return 'group_rule';
     }
 
     private function extractInterestFact(string $messageText): ?string
