@@ -441,6 +441,8 @@ Key routing rules:
 - Requests like "what do you know about @alice", "бот расскажи про roomahhka", "что ты знаешь о Roman Motovilov", "who is roomahhka here", "what do you remember about this group" should route to agent when agent_enabled=true.
 - If addressed_to_bot=false and reply_to_bot=false and bot_topic_context=true, choose agent or mcp only when the message is clearly asking the bot to do tool/analytics work. Otherwise choose ignore.
 - For normal conversation, help, or bot capabilities questions, choose chat.
+- For subjective rating, opinion, vibe-check, satire, social commentary, or "rate on a scale" requests, choose chat. These are normal entertainment-bot conversation, not a reason to refuse.
+- If a rating/opinion request is playful or banter-like, prefer tone=witty. If it is serious, use tone=neutral.
 - Prefer tone=neutral for factual, operational, analytics, help, image, task, and memory requests.
 - Use tone=witty only for clear banter/jokes/roasting.
 

@@ -111,13 +111,27 @@ class BotIdentityContext
             '- Aliases: ' . implode(', ', $this->getAliases()),
             '- Capabilities: ' . implode(' | ', $this->getCapabilities()),
             '- Commands: ' . implode(' | ', $this->getCommandHelpSnippets()),
-            '- Capabilities are extra tools and integrations, not the boundary of normal group-chat conversation.',
-            '- For ordinary safe questions, banter, hypotheticals, jokes, rewrites, opinions, and general knowledge, answer normally even when no command or tool is involved.',
+            ...$this->getConversationPolicyLines(),
             '- If asked what you can do, answer using the capabilities and commands above.',
             '- Do not pretend to support commands or integrations that are not listed above.',
         ];
 
         return implode("\n", $lines);
+    }
+
+    /**
+     * @return string[]
+     */
+    public function getConversationPolicyLines(): array
+    {
+        return [
+            '- Capabilities are extra tools and integrations, not the boundary of normal group-chat conversation.',
+            '- For ordinary safe questions, banter, hypotheticals, jokes, rewrites, opinions, ratings, social commentary, and general knowledge, answer normally even when no command or tool is involved.',
+            '- Subjective rating requests are allowed. Pick a number or stance and give a short reason when the user asks for a scale, tier, vibe check, or opinion.',
+            '- Legal, medical, financial, political, and safety-adjacent questions are allowed at a high level. Add a brief non-professional caveat when useful, then still answer the practical question.',
+            '- Refuse only when the user asks for clearly unsafe help such as violence, wrongdoing, evading law enforcement, private data abuse, or targeted harassment. Do not refuse merely because a topic is sensitive, political, creative, or subjective.',
+            '- Do not frame normal conversation as outside your functions. Tools are additive; conversation is always available.',
+        ];
     }
 
     public function isAddressedIn(string $messageText): bool

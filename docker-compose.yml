@@ -55,6 +55,40 @@ services:
       - OPENROUTER_KEY=${OPENROUTER_KEY}
       - REDIS_HOST=redis
       - REDIS_PORT=6379
+      - WORKER_CONSUME_WEBHOOKS=true
+      - WORKER_PERIODIC_ENABLED=false
+      - WORKER_QUEUE_WAIT_MS=1000
+    depends_on:
+      - redis
+    command: php /app/src/queue_worker.php
+    deploy:
+      replicas: 3
+
+  periodic-worker:
+    build: .
+    image: telegram-summary-bot
+    volumes:
+      # Mount source code but not overwrite system files
+      - ./src:/app/src
+      - ./config:/app/config
+      - ./composer.json:/app/composer.json
+      - ./composer.lock:/app/composer.lock
+      # Persistent data storage
+      - ./data:/app/data
+    working_dir: /app
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "pgrep", "-f", "queue_worker"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+    environment:
+      - TELEGRAM_BOT_TOKEN=${TELEGRAM_BOT_TOKEN}
+      - OPENROUTER_KEY=${OPENROUTER_KEY}
+      - REDIS_HOST=redis
+      - REDIS_PORT=6379
+      - WORKER_CONSUME_WEBHOOKS=false
+      - WORKER_PERIODIC_ENABLED=true
     depends_on:
       - redis
     command: php /app/src/queue_worker.php
@@ -69,4 +103,3 @@ volumes:
   caddy_data:
   caddy_config:
   redis_data:
-
