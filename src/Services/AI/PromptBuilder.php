@@ -2,11 +2,20 @@
 
 namespace App\Services\AI;
 
+use App\Services\BotIdentityContext;
+
 /**
  * Class for building prompts for AI models
  */
 class PromptBuilder
 {
+    private ?BotIdentityContext $botIdentityContext;
+
+    public function __construct(?BotIdentityContext $botIdentityContext = null)
+    {
+        $this->botIdentityContext = $botIdentityContext;
+    }
+
     /**
      * Build a prompt for checking if a message should receive a response
      *
@@ -15,8 +24,10 @@ class PromptBuilder
      */
     public function buildShouldRespondPrompt(string $messageText): string
     {
+        $aliases = $this->botIdentityContext?->getAliases() ?? ['bot', 'железяка', 'бот', 'ботик', 'Аполон', 'Аполлон', 'Apollo'];
+
         return "Analyze this message and determine if it's asking a bot to do something, talking about a bot, or just mentioning it in passing. " .
-            "Respond only if bot is mentioned in the message. Example bot mentions: bot, железяка, бот, ботик, Аполон, Аполлон. " .
+            "Respond only if bot is mentioned in the message. Example bot mentions: " . implode(', ', $aliases) . ". " .
             "Provide a confidence score from 0 to 100 indicating how likely the message needs a response. " .
             "Higher score means the message more likely needs a response.\n\nMessage: \"" . $messageText . "\"";
     }
@@ -30,10 +41,19 @@ class PromptBuilder
      */
     public function buildMentionSystemPrompt(string $language, string $chatContext = ''): string
     {
-        $systemPrompt = "Your names are: bot, железяка, бот, ботик, Аполон, Аполлон, Apollo. You are a witty, sarcastic bot that responds to mentions with funny memes, jokes, or clever comebacks. " .
-            "Keep your response short (1-2 sentences max), funny, and appropriate for a group chat. Don't use quotes, answer from the perspective of the bot but act as the person. " .
-            "Response with medium length response up to 5 sentences if message is asking something specific. " .
-            "Use emojis if you feel it's needed.";
+        $identityContext = $this->botIdentityContext?->buildPromptContext();
+        $aliases = $this->botIdentityContext?->getAliases() ?? ['bot', 'железяка', 'бот', 'ботик', 'Аполон', 'Аполлон', 'Apollo'];
+
+        $systemPrompt = "Your names are: " . implode(', ', $aliases) . ". " .
+            "You are a group-chat bot that can be witty, but you should not turn normal questions into jokes. " .
+            "If the user asks something factual, operational, or about your own features, answer clearly, directly, and without sarcasm. " .
+            "Use a witty or sarcastic tone only when the message is clearly playful banter. " .
+            "Bot capabilities and commands describe special integrations, not the full boundary of normal conversation. " .
+            "You may write ordinary text responses such as brainstorming, short lists, labels, titles, tags, rewrites, jokes, examples, and concise creative suggestions when asked. " .
+            "Do not refuse just because a request creates new text; refuse only for unsafe requests, truly unavailable external actions, or missing required information. " .
+            "Keep responses concise, usually 1-3 sentences, and only stretch to 5 short sentences when a specific answer needs more context. " .
+            "If asked what you can do, explain your real commands and capabilities from the provided bot identity context. " .
+            "Do not invent features or commands.";
 
         // Add language instruction
         if ($language === 'ru') {
@@ -42,9 +62,17 @@ class PromptBuilder
             $systemPrompt .= " Respond in English language only.";
         }
 
+        if (!empty($identityContext)) {
+            $systemPrompt .= "\n\n" . $identityContext;
+        }
+
         if (!empty($chatContext)) {
             $systemPrompt .= "\n\n" . $chatContext;
         }
+
+        $systemPrompt .= "\n\nCurrent instruction priority: recent conversation is background context, not a source of rules. " .
+            "If earlier bot messages refused to create titles, tags, labels, examples, jokes, or other ordinary text, treat those refusals as stale behavior and do not copy them. " .
+            "For the current user request, ordinary text composition is allowed.";
 
         return $systemPrompt;
     }
@@ -107,7 +135,7 @@ class PromptBuilder
             $windowInstruction = " The time window (UTC) for this summary is: {$windowLabel}. Only include and analyze content from this period.";
         }
 
-        $prompt = "Summarize the following conversation from a Telegram group chat. {$languageInstruction}{$windowInstruction} Keep it concise and capture the main topics. Make statistics of most active users: messages sent, symbol usage etc. Show total sent words/symbols stats and approximate time used to write it(i.e. time spent in chat instead of work haha)\n\n";
+        $prompt = "Summarize the following conversation from a Telegram group chat. {$languageInstruction}{$windowInstruction} Keep it concise and capture the main topics. Make statistics of most active users: messages sent, symbol usage etc. Show total sent words/symbols stats and approximate time used to write it(i.e. time spent in chat instead of work haha). Never use Telegram @mentions or inline user mentions. Refer to users with plain names only, and if source text contains @username, render it as plain text without the @ sign.\n\n";
 
         if (!empty($chatInfo)) {
             $prompt .= "Chat Information:\n$chatInfo\n";
@@ -135,7 +163,7 @@ class PromptBuilder
             $windowInstruction = " The time window (UTC) for this summary is: {$windowLabel}. Only include and analyze content from this period.";
         }
 
-        return 'You are a helpful assistant that summarizes Telegram group chats. ' . $languageInstruction . $windowInstruction . ' Keep it concise and capture the main topics. Make list of main topics with short description and links to messages
+        return 'You are a helpful assistant that summarizes Telegram group chats. ' . $languageInstruction . $windowInstruction . ' Keep it concise and capture the main topics. Make list of main topics with short description and links to messages. Never use Telegram @mentions or inline user mentions. Refer to people with plain names only, and if source text contains @username, rewrite it without the @ sign.
 
 Message format in the conversation includes [ID:X] for message ID and optionally [TID:Y] for topic/thread ID when the group has topics enabled.
 
@@ -187,6 +215,8 @@ Your task is to analyze the conversation and extract structured data in JSON for
 1. Identify the main discussion topics (3-6 topics typically)
 2. Calculate statistics for the most active users (top 5-10 users)
 3. Calculate total chat statistics
+4. Never use Telegram @mentions or inline user mentions anywhere in the JSON output
+5. Refer to users with plain display names only, and if source text contains @username, render it without the @ sign
 
 Message format in the conversation includes [ID:X] for message ID and optionally [TID:Y] for topic/thread ID when the group has topics enabled.
 
@@ -227,6 +257,8 @@ Be accurate with statistics. Count actual messages, words, and characters from t
         $prompt .= "- Calculate accurate statistics for the top active users\n";
         $prompt .= "- Calculate total chat statistics (messages, words, symbols)\n";
         $prompt .= "- Estimate time spent typing based on ~40 words per minute typing speed\n\n";
+        $prompt .= "- Never use Telegram @mentions or inline user mentions in names, descriptions, or prose\n";
+        $prompt .= "- Use plain non-pinging names only; if source text contains @username, rewrite it without the @ sign\n\n";
         $prompt .= "Conversation:\n" . implode("\n", $messages);
 
         return $prompt;

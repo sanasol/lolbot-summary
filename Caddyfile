@@ -38,6 +38,30 @@
 # Server block listening on specified ports (default: 80, 443)
 # Use the SERVER_NAME environment variable as the site address
 {$SERVER_NAME} {
+	# Clean URL rewrite: /r/{id} → /src/view.php?id={id}
+	@viewResult path_regexp result ^/r/([0-9a-f]{32})$
+	handle @viewResult {
+		rewrite * /src/view.php?id={re.result.1}
+	}
+
+	# OG image: /r/{id}/og.png → /src/og-image.php?id={id}
+	@ogImage path_regexp ogimg ^/r/([0-9a-f]{32})/og\.png$
+	handle @ogImage {
+		rewrite * /src/og-image.php?id={re.ogimg.1}
+	}
+
+	# Usage dashboard
+	@dashboard path /dashboard
+	handle @dashboard {
+		rewrite * /src/dashboard.php
+	}
+
+	# Message viewer
+	@messages path /messages
+	handle @messages {
+		rewrite * /src/messages.php
+	}
+
 	# Set the web root (optional if files are in /app)
 	# root * /app/public
     php_server {

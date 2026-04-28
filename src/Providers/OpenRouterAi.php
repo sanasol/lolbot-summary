@@ -43,6 +43,15 @@ class OpenRouterAi implements AIProviderInterface
      * https://platform.openai.com/docs/api-reference/chat/create
      */
     protected ?string $system = null;
+    protected int $httpTimeout = 120;
+
+    /**
+     * Cumulative token usage across all API calls (including tool call rounds)
+     */
+    protected int $totalInputTokens = 0;
+    protected int $totalOutputTokens = 0;
+    protected int $apiCallCount = 0;
+    protected array $serverToolUsage = [];
 
     /**
      * @param array<string, mixed> $parameters
@@ -52,8 +61,15 @@ class OpenRouterAi implements AIProviderInterface
         protected string $model,
         protected array $parameters = [],
     ) {
+        if (isset($this->parameters['http_timeout']) && is_numeric($this->parameters['http_timeout'])) {
+            $this->httpTimeout = max(1, (int)$this->parameters['http_timeout']);
+            unset($this->parameters['http_timeout']);
+        }
+
         $this->client = new Client([
             'base_uri' => \trim($this->baseUri, '/').'/',
+            'timeout' => $this->httpTimeout,
+            'connect_timeout' => min(15, $this->httpTimeout),
             'headers' => [
                 'Accept' => 'application/json',
                 'Content-Type' => 'application/json',
@@ -76,7 +92,7 @@ class OpenRouterAi implements AIProviderInterface
 
     public function toolPayloadMapper(): ToolPayloadMapperInterface
     {
-        return $this->toolPayloadMapper ?? $this->toolPayloadMapper = new \NeuronAI\Providers\OpenAI\ToolPayloadMapper();
+        return $this->toolPayloadMapper ?? $this->toolPayloadMapper = new OpenRouterToolPayloadMapper();
     }
 
     /**
@@ -98,17 +114,7 @@ class OpenRouterAi implements AIProviderInterface
         // Attach tools
         if (!empty($this->tools)) {
             $json['tools'] = $this->generateToolsPayload();
-
-            // Ensure we request reasoning blocks so they can be preserved across tool calls
-            // Respect explicitly provided extra_body in $this->parameters, otherwise set a sensible default
-            if (!isset($json['extra_body'])) {
-                $json['extra_body'] = ['reasoning' => ['max_tokens' => 2000]];
-            } else {
-                // Do not override user's config, but if reasoning key missing, add a default
-                if (is_array($json['extra_body']) && !isset($json['extra_body']['reasoning'])) {
-                    $json['extra_body']['reasoning'] = ['max_tokens' => 2000];
-                }
-            }
+            $json = $this->applyReasoningConfig($json);
         }
 
         return $this->client->postAsync('chat/completions', ['json' => $json])
@@ -127,6 +133,10 @@ class OpenRouterAi implements AIProviderInterface
                     $responseMessage = new \NeuronAI\Chat\Messages\AssistantMessage($msg['content'] ?? '');
                 }
 
+                if (isset($msg['images']) && \is_array($msg['images'])) {
+                    $responseMessage->addMetadata('images', $msg['images']);
+                }
+
                 // NOTE: We intentionally do NOT store reasoning_details in metadata.
                 // These contain model-specific encrypted "thought signatures" that cannot
                 // be replayed in subsequent API calls and cause errors like:
@@ -139,14 +149,85 @@ class OpenRouterAi implements AIProviderInterface
                     $promptTokens = $usage['prompt_tokens'] ?? $usage['input_tokens'] ?? null;
                     $completionTokens = $usage['completion_tokens'] ?? $usage['output_tokens'] ?? null;
                     if ($promptTokens !== null && $completionTokens !== null) {
+                        // Accumulate across all API calls (tool call rounds)
+                        $this->totalInputTokens += (int)$promptTokens;
+                        $this->totalOutputTokens += (int)$completionTokens;
+                        $this->apiCallCount++;
+
+                        // Set cumulative usage so the final response has total counts
                         $responseMessage->setUsage(
-                            new \NeuronAI\Chat\Messages\Usage($promptTokens, $completionTokens)
+                            new \NeuronAI\Chat\Messages\Usage(
+                                $this->totalInputTokens,
+                                $this->totalOutputTokens
+                            )
                         );
                     }
+
+                    if (isset($usage['server_tool_use']) && \is_array($usage['server_tool_use'])) {
+                        foreach ($usage['server_tool_use'] as $key => $count) {
+                            $this->serverToolUsage[$key] = (int)($this->serverToolUsage[$key] ?? 0) + (int)$count;
+                        }
+                    }
+                }
+
+                if ($this->serverToolUsage !== []) {
+                    $responseMessage->addMetadata('server_tool_use', $this->serverToolUsage);
                 }
 
                 return $responseMessage;
             });
+    }
+
+    /**
+     * Keep reasoning available for tool use, but exclude it from the visible
+     * assistant response so models like Grok do not leak scratchpad text into
+     * chat history or Telegram output.
+     *
+     * @param array<string, mixed> $json
+     * @return array<string, mixed>
+     */
+    private function applyReasoningConfig(array $json): array
+    {
+        if (isset($json['reasoning']) && \is_array($json['reasoning'])) {
+            if (!isset($json['reasoning']['exclude'])) {
+                $json['reasoning']['exclude'] = true;
+            }
+            return $json;
+        }
+
+        if (isset($json['extra_body']) && \is_array($json['extra_body']) && isset($json['extra_body']['reasoning']) && \is_array($json['extra_body']['reasoning'])) {
+            if (!isset($json['extra_body']['reasoning']['exclude'])) {
+                $json['extra_body']['reasoning']['exclude'] = true;
+            }
+            return $json;
+        }
+
+        if (str_starts_with($this->model, 'x-ai/')) {
+            $json['reasoning'] = [
+                'effort' => 'medium',
+                'exclude' => true,
+            ];
+            return $json;
+        }
+
+        $json['reasoning'] = [
+            'max_tokens' => 1024,
+            'exclude' => true,
+        ];
+
+        return $json;
+    }
+
+    /**
+     * Get cumulative token usage across all API calls
+     */
+    public function getCumulativeUsage(): array
+    {
+        return [
+            'input_tokens'  => $this->totalInputTokens,
+            'output_tokens' => $this->totalOutputTokens,
+            'api_calls'     => $this->apiCallCount,
+        ];
     }
 
     public function generateToolsPayload(): array

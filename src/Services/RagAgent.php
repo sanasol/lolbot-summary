@@ -51,7 +51,7 @@ class RagAgent extends RAG
     protected function embeddings(): EmbeddingsProviderInterface
     {
         return new \NeuronAI\RAG\Embeddings\VoyageEmbeddingsProvider(
-            key: 'pa-dwCoxfN7QcW0n57a7ND9vuSY-yrSafF3bEjfqmOh01d',
+            key: $this->getVoyageApiKey(),
             model: 'voyage-code-3',
         );
     }
@@ -59,9 +59,24 @@ class RagAgent extends RAG
     protected function vectorStore(): VectorStoreInterface
     {
         return new PineconeVectorStore(
-            key: 'pcsk_69TdUV_AMvUnpgXuucbZj6KHPEWSNv1aGbKUjbjFghL6SMVcrdhBrceuBLPRSzvKWW8YvG',
-            indexUrl: 'https://statbate-69i05hm.svc.aped-4627-b74a.pinecone.io'
+            key: $this->getPineconeApiKey(),
+            indexUrl: $this->getPineconeIndexUrl()
         );
+    }
+
+    private function getVoyageApiKey(): string
+    {
+        return trim((string)(self::$config['voyage_api_key'] ?? getenv('VOYAGE_API_KEY') ?: ''));
+    }
+
+    private function getPineconeApiKey(): string
+    {
+        return trim((string)(self::$config['pinecone_api_key'] ?? getenv('PINECONE_API_KEY') ?: ''));
+    }
+
+    private function getPineconeIndexUrl(): string
+    {
+        return trim((string)(self::$config['pinecone_index_url'] ?? getenv('PINECONE_INDEX_URL') ?: ''));
     }
 
 

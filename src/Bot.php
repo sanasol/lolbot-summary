@@ -4,10 +4,15 @@ namespace App;
 
 use App\Services\AIService;
 use App\Services\AntiSpamHandler;
+use App\Services\BotIdentityContext;
 use App\Services\BotMentionHandler;
+use App\Services\ChatMemoryStore;
+use App\Services\ChatMetadataService;
 use App\Services\CommandHandler;
+use App\Services\InteractionRouter;
 use App\Services\LoggerService;
 use App\Services\MarkdownService;
+use App\Services\MemoryExtractor;
 use App\Services\MessageStorage;
 use App\Services\SettingsService;
 use App\Services\TelegramSender;
@@ -15,6 +20,7 @@ use App\Services\TelegramReactionService;
 use App\Services\WebhookProcessor;
 use App\Services\VoteService;
 use App\Services\NewUserRestrictionService;
+use App\Services\AgentTaskRunner;
 use Longman\TelegramBot\Telegram;
 use Longman\TelegramBot\Exception\TelegramException;
 use RuntimeException;
@@ -35,9 +41,15 @@ class Bot
     private BotMentionHandler $mentionHandler;
     private WebhookProcessor $webhookProcessor;
     private AntiSpamHandler $antiSpamHandler;
+    private BotIdentityContext $botIdentityContext;
+    private ChatMetadataService $chatMetadataService;
+    private InteractionRouter $interactionRouter;
     private \App\Services\VoteService $voteService;
     private \App\Services\MuteService $muteService;
     private NewUserRestrictionService $newUserRestrictionService;
+    private ChatMemoryStore $chatMemoryStore;
+    private MemoryExtractor $memoryExtractor;
+    private AgentTaskRunner $agentTaskRunner;
 
     // For daily summary scheduling
     private $lastSummaryCheckTime = 0;
@@ -70,6 +82,7 @@ class Bot
         try {
             // Initialize Telegram bot
             $this->telegram = new Telegram($config['telegram_bot_token'], 'newbotname2025bot'); // Replace BotUsername if needed
+            $this->botIdentityContext->setTelegramUsername($this->telegram->getBotUsername());
 
             // Initialize webhook processor with bot username
             $this->webhookProcessor = new WebhookProcessor(
@@ -81,6 +94,9 @@ class Bot
                 $this->antiSpamHandler,
                 $this->newUserRestrictionService,
                 $this->settingsService,
+                $this->interactionRouter,
+                $this->chatMetadataService,
+                $this->memoryExtractor,
                 $this->config,
                 $this->telegram->getBotUsername()
             );
@@ -102,9 +118,16 @@ class Bot
         $this->settingsService = new SettingsService($this->logPath);
         $this->messageStorage = new MessageStorage($this->logPath);
         $this->markdownService = new MarkdownService();
+        $this->botIdentityContext = new BotIdentityContext();
+        $this->chatMetadataService = new ChatMetadataService($this->logPath, $this->logger, $this->settingsService);
+        $this->chatMemoryStore = new ChatMemoryStore($this->logPath, $this->logger);
+        $this->memoryExtractor = new MemoryExtractor($this->config, $this->logger, $this->chatMemoryStore);
+        $this->interactionRouter = new InteractionRouter($this->botIdentityContext, $this->logger, $this->config);
+
+        \App\Services\UsageTracker::setDataPath($this->logPath);
 
         // AI service depends on settings and logger
-        $this->aiService = new AIService($this->config, $this->settingsService, $this->logger);
+        $this->aiService = new AIService($this->config, $this->settingsService, $this->logger, $this->botIdentityContext);
 
         // Services that depend on other services
         $this->sender = new TelegramSender(
@@ -120,7 +143,10 @@ class Bot
             $this->settingsService,
             $this->messageStorage,
             $this->logger,
-            $reactionService
+            $reactionService,
+            $this->botIdentityContext,
+            $this->chatMetadataService,
+            $this->chatMemoryStore
         );
         $this->voteService = new VoteService($this->logPath);
         $this->muteService = new \App\Services\MuteService($this->logPath);
@@ -132,6 +158,8 @@ class Bot
             $this->sender,
             $this->voteService,
             $this->muteService,
+            $this->botIdentityContext,
+            $this->chatMetadataService,
             $this->config
         );
 
@@ -146,6 +174,14 @@ class Bot
             $this->logger,
             $this->settingsService,
             $this->config
+        );
+        // Provide storage context. Known-user backfill is manual via src/backfill_known_users.php.
+        $this->newUserRestrictionService->setMessageStorage($this->messageStorage);
+        $this->agentTaskRunner = new AgentTaskRunner(
+            $this->aiService->getAgentTaskStore(),
+            $this->aiService,
+            $this->sender,
+            $this->logger
         );
     }
 
@@ -177,6 +213,21 @@ class Bot
     public function getNewUserRestrictionService(): NewUserRestrictionService
     {
         return $this->newUserRestrictionService;
+    }
+
+    public function getAgentTaskRunner(): AgentTaskRunner
+    {
+        return $this->agentTaskRunner;
+    }
+
+    public function getChatMemoryStore(): ChatMemoryStore
+    {
+        return $this->chatMemoryStore;
+    }
+
+    public function getMemoryExtractor(): MemoryExtractor
+    {
+        return $this->memoryExtractor;
     }
 
     /**

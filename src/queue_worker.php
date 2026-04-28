@@ -28,6 +28,9 @@ if (!file_exists($configPath)) {
 
 $config = require $configPath;
 
+// Initialize usage tracker data path
+\App\Services\UsageTracker::setDataPath($config['log_path'] ?? __DIR__ . '/../data');
+
 // Validate essential configuration
 if (empty($config['telegram_bot_token']) || $config['telegram_bot_token'] === 'YOUR_TELEGRAM_BOT_TOKEN') {
     error_log('Queue Worker Error: Telegram Bot Token is not configured.');

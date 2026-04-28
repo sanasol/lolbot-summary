@@ -209,11 +209,28 @@ class SummaryGenerator
 
                 // Format the summary from JSON data
                 $formattedSummary = $this->formatSummaryFromJson($summaryData, $language);
+                $formattedSummary = $this->neutralizeTelegramMentions($formattedSummary);
                 $summaryLength = strlen($formattedSummary);
 
                 // Log successful summary generation
                 $this->logger->log("Successfully generated formatted summary ($summaryLength chars) for $chatIdentifier", "Summary", "webhook");
                 $this->logger->log("Successfully generated formatted summary ($summaryLength chars) for $chatIdentifier", "Summary", "summary");
+
+                // Track usage
+                $inTokens = $body['usage']['prompt_tokens'] ?? null;
+                $outTokens = $body['usage']['completion_tokens'] ?? null;
+                \App\Services\UsageTracker::track([
+                    'chat_id' => $chatId,
+                    'user_id' => null,
+                    'username' => null,
+                    'type' => 'summary',
+                    'model' => $this->config['openrouter_summary_model'] ?? 'unknown',
+                    'input_tokens' => $inTokens,
+                    'output_tokens' => $outTokens,
+                    'duration_s' => $duration,
+                    'success' => true,
+                    'chat_title' => $chatTitle,
+                ]);
 
                 return $formattedSummary . "\n\n<i>model: " . htmlspecialchars($this->config['openrouter_summary_model']) . "</i>";
             }
@@ -229,10 +246,24 @@ class SummaryGenerator
             // Log request exception
             $this->logger->logError("OpenRouter API Request Exception for $chatIdentifier: " . $e->getMessage() . " | Response: " . $errorResponse, "Summary", $e);
 
+            \App\Services\UsageTracker::track([
+                'chat_id' => $chatId, 'type' => 'summary',
+                'model' => $this->config['openrouter_summary_model'] ?? 'unknown',
+                'duration_s' => round(microtime(true) - $startTime, 2),
+                'success' => false, 'error' => $e->getMessage(), 'chat_title' => $chatTitle,
+            ]);
+
             return null;
         } catch (\Exception $e) {
             // Log general exception
             $this->logger->logError("Error generating summary for $chatIdentifier: " . $e->getMessage(), "Summary", $e);
+
+            \App\Services\UsageTracker::track([
+                'chat_id' => $chatId, 'type' => 'summary',
+                'model' => $this->config['openrouter_summary_model'] ?? 'unknown',
+                'duration_s' => round(microtime(true) - $startTime, 2),
+                'success' => false, 'error' => $e->getMessage(), 'chat_title' => $chatTitle,
+            ]);
 
             return null;
         }
@@ -349,5 +380,34 @@ class SummaryGenerator
         }
 
         return implode("\n", $output);
+    }
+
+    private function neutralizeTelegramMentions(string $text): string
+    {
+        if (trim($text) === '') {
+            return $text;
+        }
+
+        $urlMap = [];
+        $protected = preg_replace_callback(
+            '~(?:https?://|tg://)[^\s<>"\']+~u',
+            static function (array $matches) use (&$urlMap): string {
+                $key = '__SUMMARY_URL_' . count($urlMap) . '__';
+                $urlMap[$key] = $matches[0];
+                return $key;
+            },
+            $text
+        );
+
+        if (!is_string($protected)) {
+            return $text;
+        }
+
+        $neutralized = preg_replace('/(?<![\pL\pN_])@([A-Za-z0-9_]{3,32})\b/u', '$1', $protected);
+        if (!is_string($neutralized)) {
+            $neutralized = $protected;
+        }
+
+        return strtr($neutralized, $urlMap);
     }
 }

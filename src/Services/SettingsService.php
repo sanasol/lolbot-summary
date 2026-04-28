@@ -13,6 +13,10 @@ class SettingsService
         'language' => 'en',  // Default language for summaries and bot responses
         'summary_enabled' => true,  // Whether summaries are enabled for this group
         'bot_mentions_enabled' => true,  // Whether bot should respond to mentions
+        'reply_style_mode' => 'auto', // Tone selection for conversational replies
+        'group_context_note' => null, // Admin-provided context about the group
+        'intent_router_enabled' => null, // Per-chat override for the new router; null means use global default
+        'agent_tools_enabled' => null, // Per-chat override for agent tool mode; null means use global default
         'summary_hour_utc' => 8, // Default summary sending hour in UTC (0-23)
         'message_thread_id' => null, // Topic/thread ID in supergroup to restrict bot replies
         // Community moderation via voting
@@ -196,6 +200,8 @@ class SettingsService
         switch ($key) {
             case 'language':
                 return in_array($value, array_keys($this->getAvailableLanguages()));
+            case 'reply_style_mode':
+                return is_string($value) && in_array(strtolower(trim($value)), ['auto', 'neutral', 'witty'], true);
             case 'summary_enabled':
             case 'bot_mentions_enabled':
             case 'bot_mentions_react_when_no_reply':
@@ -204,6 +210,14 @@ class SettingsService
             case 'vote_moderation_enabled':
             case 'new_user_restriction_enabled':
                 return is_bool($value) || (is_string($value) && in_array(strtolower($value), ['true', 'false', '1', '0']));
+            case 'intent_router_enabled':
+            case 'agent_tools_enabled':
+                if ($value === null) {
+                    return true;
+                }
+                return is_bool($value) || (is_string($value) && in_array(strtolower(trim($value)), ['true', 'false', '1', '0', 'on', 'off', 'null', 'default', 'inherit'], true));
+            case 'group_context_note':
+                return $value === null || is_string($value);
             case 'summary_hour_utc':
                 if (is_numeric($value)) {
                     $int = (int)$value;
@@ -282,6 +296,9 @@ class SettingsService
     public function formatSettingValue(string $key, $value)
     {
         switch ($key) {
+            case 'reply_style_mode':
+                $value = strtolower(trim((string)$value));
+                return in_array($value, ['auto', 'neutral', 'witty'], true) ? $value : 'auto';
             case 'summary_enabled':
             case 'bot_mentions_enabled':
             case 'bot_mentions_react_when_no_reply':
@@ -293,6 +310,24 @@ class SettingsService
                     return in_array(strtolower($value), ['true', '1', 'on']);
                 }
                 return (bool)$value;
+            case 'intent_router_enabled':
+                if ($value === null) {
+                    return null;
+                }
+                if (is_string($value)) {
+                    $normalized = strtolower(trim($value));
+                    if (in_array($normalized, ['null', 'default', 'inherit'], true)) {
+                        return null;
+                    }
+                    return in_array($normalized, ['true', '1', 'on'], true);
+                }
+                return (bool)$value;
+            case 'group_context_note':
+                if ($value === null) {
+                    return null;
+                }
+                $value = trim((string)$value);
+                return $value !== '' ? $value : null;
             case 'summary_hour_utc':
                 $int = (int)$value;
                 if ($int < 0) $int = 0;

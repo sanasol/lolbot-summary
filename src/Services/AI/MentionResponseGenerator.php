@@ -50,6 +50,7 @@ class MentionResponseGenerator
      */
     public function generate(string $messageText, string $username, string $chatContext = '', ?string $inputImageUrl = null, bool $isBase64 = false, int $chatId = 0, bool $isReplyToBot = false): ?array
     {
+        $startTime = microtime(true);
         try {
             // Log API request
             $this->logger->log("Generating Grok response for message: " . substr($messageText, 0, 50) . (strlen($messageText) > 50 ? '...' : ''), "Grok Response", "webhook");
@@ -125,7 +126,7 @@ class MentionResponseGenerator
                     return null;
                 }
             } else {
-                $this->logger->log("This is a response to bot's message, we have to answer", "Grok Response", "webhook");
+                $this->logger->log("Forced conversational response path selected, skipping mention-confidence gate", "Grok Response", "webhook");
             }
 
             // If we should respond with text, generate a response
@@ -173,6 +174,21 @@ class MentionResponseGenerator
                 // Log successful response generation
                 $this->logger->log("Generated text response: " . $grokResponse, "Grok Response", "webhook");
 
+                // Track usage
+                $inTokens = $body['usage']['prompt_tokens'] ?? null;
+                $outTokens = $body['usage']['completion_tokens'] ?? null;
+                \App\Services\UsageTracker::track([
+                    'chat_id' => $chatId,
+                    'user_id' => null,
+                    'username' => $username,
+                    'type' => 'mention',
+                    'model' => $this->config['openrouter_chat_model'] ?? 'unknown',
+                    'input_tokens' => $inTokens,
+                    'output_tokens' => $outTokens,
+                    'duration_s' => round(microtime(true) - $startTime, 2),
+                    'success' => true,
+                ]);
+
                 return $this->formatter->formatTextResponse($grokResponse);
             }
 
@@ -183,9 +199,21 @@ class MentionResponseGenerator
         } catch (RequestException $e) {
             $errorResponse = $e->hasResponse() ? $e->getResponse()->getBody()->getContents() : 'No response body';
             $this->logger->logError("API Request Exception: " . $e->getMessage() . " | Response: " . $errorResponse, "Grok Response", $e);
+            \App\Services\UsageTracker::track([
+                'chat_id' => $chatId, 'username' => $username, 'type' => 'mention',
+                'model' => $this->config['openrouter_chat_model'] ?? 'unknown',
+                'duration_s' => round(microtime(true) - $startTime, 2),
+                'success' => false, 'error' => $e->getMessage(),
+            ]);
             return null;
         } catch (\Exception $e) {
             $this->logger->logError("Error generating response: " . $e->getMessage(), "Grok Response", $e);
+            \App\Services\UsageTracker::track([
+                'chat_id' => $chatId, 'username' => $username, 'type' => 'mention',
+                'model' => $this->config['openrouter_chat_model'] ?? 'unknown',
+                'duration_s' => round(microtime(true) - $startTime, 2),
+                'success' => false, 'error' => $e->getMessage(),
+            ]);
             return null;
         }
     }

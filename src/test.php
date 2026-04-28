@@ -49,7 +49,7 @@ var_dump($content);
 die();
 //
 //$provider = new \NeuronAI\RAG\Embeddings\VoyageEmbeddingsProvider(
-//    key: 'pa-dwCoxfN7QcW0n57a7ND9vuSY-yrSafF3bEjfqmOh01d',
+//    key: getenv('VOYAGE_API_KEY') ?: '',
 //    model: 'voyage-code-3',
 //);
 //
@@ -64,12 +64,12 @@ $files = [
 ];
 
 $provider = new \NeuronAI\RAG\Embeddings\VoyageEmbeddingsProvider(
-    key: 'pa-dwCoxfN7QcW0n57a7ND9vuSY-yrSafF3bEjfqmOh01d',
+    key: getenv('VOYAGE_API_KEY') ?: '',
     model: 'voyage-code-3',
 );
 $vectorStore = new PineconeVectorStore(
-    key: 'pcsk_69TdUV_AMvUnpgXuucbZj6KHPEWSNv1aGbKUjbjFghL6SMVcrdhBrceuBLPRSzvKWW8YvG',
-    indexUrl: 'https://statbate-69i05hm.svc.aped-4627-b74a.pinecone.io'
+    key: getenv('PINECONE_API_KEY') ?: '',
+    indexUrl: getenv('PINECONE_INDEX_URL') ?: ''
 );
 //
 //$documents = \NeuronAI\RAG\DataLoader\FileDataLoader::for('src/statbateCode/Controllers')
@@ -99,12 +99,12 @@ $rag = \App\Services\RagAgent::make($config)
             database definition for clickhouse: " . $config['clickhouse_db_definition'] . "
             logs_v2 table available but for requests not more than 1 day
             room_activity each record is 1 minute but must be grouped, can contain duplicated records.
-            Databases available: statbate, stripchat, camsoda, bongacams, mfc. Statbate database is chaturbate actually or CB
-            By default use statbate database unless otherwise specified.
+            Databases available: chaturbate, stripchat, camsoda, bongacams, mfc, livejasmin.
+            By default use chaturbate database unless otherwise specified.
             DONT MAKE SUMMARIES OF THE ENTIRE DATABASE OR ANYTHING ELSE THAT IS NOT REQUESTED IN THE MESSAGE!
             DONT MAKE SUMMARIES THAT REQUESTED more than 30 days of data, limit all queries by date to less than 30 days ago.
             DONT ANSWER \"ALL TIME\" or similar requests ONLY 30 days or lesser Allowed
-            By default use statbate database unless otherwise specified.
+            By default use chaturbate database unless otherwise specified.
             all queries must include database name
             Data in database stored in UTC timezone.
             Current time: ".date('Y-m-d H:i:s').".

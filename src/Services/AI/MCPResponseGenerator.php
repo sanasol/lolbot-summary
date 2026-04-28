@@ -6,7 +6,6 @@ use App\Services\LoggerService;
 use GuzzleHttp\Exception\ClientException;
 use NeuronAI\Exceptions\NeuronException;
 use NeuronAI\Observability\AgentMonitoring;
-use NeuronAI\Chat\History\FileChatHistory;
 use Inspector\Configuration;
 use Inspector\Inspector;
 
@@ -21,6 +20,7 @@ class MCPResponseGenerator
     private ResponseFormatter $formatter;
     private LoggerService $logger;
     private ?\App\Services\SettingsService $settingsService;
+    private McpResponseSanitizer $sanitizer;
 
     /**
      * Detect if model response accidentally contains parts of the internal system prompt
@@ -76,6 +76,7 @@ class MCPResponseGenerator
         $this->formatter = $formatter;
         $this->logger = $logger;
         $this->settingsService = $settingsService;
+        $this->sanitizer = new McpResponseSanitizer();
     }
 
     /**
@@ -152,14 +153,44 @@ class MCPResponseGenerator
      *              Format: ['type' => 'text', 'content' => string, 'tool_calls' => array|null]
      *              Or error: ['type' => 'error', 'content' => string, 'error_type' => string]
      */
+    /**
+     * Check if an exception is a transient connection/transport error worth retrying
+     */
+    private function isTransientError(\Throwable $e): bool
+    {
+        $message = $e->getMessage();
+        $transientPatterns = [
+            'cURL error 18',  // transfer closed with outstanding read data remaining
+            'cURL error 28',  // connection timed out
+            'cURL error 35',  // SSL connect error
+            'cURL error 52',  // empty reply from server
+            'cURL error 56',  // recv failure
+            'Connection reset',
+            'Connection refused',
+            'transfer closed',
+        ];
+
+        foreach ($transientPatterns as $pattern) {
+            if (stripos($message, $pattern) !== false) {
+                return true;
+            }
+        }
+
+        return false;
+    }
+
     public function generate(string $messageText, string $username, string $chatContext = '', ?int $userId = null, ?int $chatId = null, ?\App\Services\TelegramSender $sender = null, ?int $threadId = null): array
     {
+        $startTime = microtime(true);
         try {
             // Log request
             $this->logger->log("Generating MCP response for message: " . substr($messageText, 0, 50) . (strlen($messageText) > 50 ? '...' : ''), "MCP Response", "webhook");
 
-            // Create a user message with the input (compatible with both enum and string role implementations)
-            $userMessage = new \NeuronAI\Chat\Messages\Message(\NeuronAI\Chat\Enums\MessageRole::USER, $messageText);
+            // Create a user message with explicit "current request" marker so the AI doesn't
+            // confuse it with previous requests in chat history
+            $currentTimestamp = date('Y-m-d H:i:s');
+            $markedMessage = "[NEW REQUEST at {$currentTimestamp}] {$messageText}";
+            $userMessage = new \NeuronAI\Chat\Messages\Message(\NeuronAI\Chat\Enums\MessageRole::USER, $markedMessage);
 
             $inspector = new Inspector(
                 (new Configuration($this->config['inspector_ingestion_key']))
@@ -197,8 +228,9 @@ class MCPResponseGenerator
 
                 if (is_dir($chatHistoryDir)) {
                     try {
-                        // Use FileChatHistory with 30k token context window to keep history manageable
-                        $chatHistory = new FileChatHistory($chatHistoryDir, $historyKey, 30000, 'mcp_');
+                        // Use sanitized file-backed chat history so one broken model output
+                        // cannot poison future MCP requests in the same topic.
+                        $chatHistory = new SafeMcpChatHistory($chatHistoryDir, $historyKey, 30000, 'mcp_');
                         $agent->withChatHistory($chatHistory);
                         $this->logger->log("Using persistent chat history for key: {$historyKey}", "MCP Response", "webhook");
                     } catch (\Exception $e) {
@@ -217,27 +249,91 @@ class MCPResponseGenerator
             // Log that we're sending the message to the agent
             $this->logger->log("Sending message to ClickhouseAgent", "MCP Response", "webhook");
 
-            // Get response from the agent
-            $response = $agent->chat($userMessage);
+            // Get response from the agent with a single retry on transient connection errors
+            $response = null;
+            $maxRetries = 1;
+            $lastException = null;
+
+            for ($attempt = 0; $attempt <= $maxRetries; $attempt++) {
+                try {
+                    if ($attempt > 0) {
+                        $this->logger->log("Retrying AI request (attempt " . ($attempt + 1) . "/" . ($maxRetries + 1) . ") after transient error", "MCP Response", "webhook");
+                        // Re-create agent for clean state on retry
+                        $agent = \App\Services\ClickhouseAgent::make($this->config, $hasActiveSubscription)
+                            ->observe(new AgentMonitoring($inspector));
+                        if (isset($chatHistory)) {
+                            $agent->withChatHistory($chatHistory);
+                        }
+                        if ($chatId !== null && $sender !== null) {
+                            $agent->observe(new \App\Services\ChatActionObserver($chatId, $sender, $threadId));
+                        }
+                    }
+                    $response = $agent->chat($userMessage);
+                    break; // Success, exit retry loop
+                } catch (\Exception $retryEx) {
+                    $lastException = $retryEx;
+                    if ($attempt < $maxRetries && $this->isTransientError($retryEx)) {
+                        $this->logger->log("Transient error detected, will retry: " . $retryEx->getMessage(), "MCP Response", "webhook");
+                        sleep(2); // Brief pause before retry
+                        continue;
+                    }
+                    throw $retryEx; // Not transient or out of retries, propagate
+                }
+            }
 
             // Clean up chat action sender
             \App\Services\ClickhouseAgent::setChatActionSender(null, null);
 
             $inspector->flush();
             $content = $response->getContent();
+            if (!\is_string($content)) {
+                $content = json_encode($content, JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES) ?: '';
+            }
             $usage = $response->getUsage();
             $in_tokens = $usage?->inputTokens;
             $out_tokens = $usage?->outputTokens;
 
-            // Check for potential system prompt leakage
-            if ($this->containsSystemPromptLeak($content)) {
+            $sanitizedContent = $this->sanitizer->sanitize($content);
+            if ($sanitizedContent !== $content) {
+                $this->logger->log(
+                    "Sanitized suspicious MCP response (original_len=" . mb_strlen($content) . ", cleaned_len=" . mb_strlen($sanitizedContent) . ")",
+                    "MCP Response",
+                    "webhook"
+                );
+            }
+
+            if (trim($sanitizedContent) === '') {
+                $this->logger->logError("Model response became empty after MCP sanitization", "MCP Response");
+                return $this->formatter->formatErrorResponse(
+                    'The AI model returned a corrupted response. Please try again.',
+                    'corrupted_response'
+                );
+            }
+
+            // Check for potential system prompt leakage after sanitization.
+            if ($this->containsSystemPromptLeak($sanitizedContent)) {
                 $this->logger->logError("Detected system prompt leakage in model output. Returning error response.", "MCP Response");
                 return $this->formatter->formatErrorResponse('Request failed. Please try again.', 'system_prompt_leak');
             }
 
+            $content = $sanitizedContent;
 
             // Log successful response generation
             $this->logger->log("Generated response: " . substr($content, 0, 100) . (strlen($content) > 100 ? '...' : ''), "MCP Response", "webhook");
+
+            // Track usage
+            \App\Services\UsageTracker::track([
+                'chat_id' => $chatId,
+                'user_id' => $userId,
+                'username' => $username,
+                'type' => 'mcp',
+                'model' => $this->config['openrouter_tool_model'] ?? 'unknown',
+                'input_tokens' => $in_tokens,
+                'output_tokens' => $out_tokens,
+                'tool_calls' => null,
+                'duration_s' => round(microtime(true) - $startTime, 2),
+                'success' => true,
+            ]);
 
             // Add subscription footer if user has active subscription
             $subscriptionFooter = '';
@@ -245,29 +341,61 @@ class MCPResponseGenerator
                 $subscriptionFooter = "\n\n<i>This request was made with an active Statbate Plus subscription without 30 day limit.</i>";
             }
 
-            return [
-                'type' => 'text',
-                'content' => !empty($content) ? ($content.$subscriptionFooter.' 
+            if (!empty($content)) {
+                return [
+                    'type' => 'text',
+                    'content' => $content . $subscriptionFooter . " \n\nmodel:" . $this->config['openrouter_tool_model']
+                ];
+            }
 
-model:'.$this->config['openrouter_tool_model']) : 'Something went wrong. Please try again later. model: '.$this->config['openrouter_tool_model']
-            ];
+            // Empty content from model — return a clear error
+            $this->logger->logError("AI model returned empty content", "MCP Response");
+            return $this->formatter->formatErrorResponse(
+                'The AI model returned an empty response. Please try again.',
+                'empty_response'
+            );
 
         } catch (ClientException $e) {
+            \App\Services\UsageTracker::track([
+                'chat_id' => $chatId, 'user_id' => $userId, 'username' => $username,
+                'type' => 'mcp', 'model' => $this->config['openrouter_tool_model'] ?? 'unknown',
+                'duration_s' => round(microtime(true) - $startTime, 2),
+                'success' => false, 'error' => $e->getMessage(),
+            ]);
             return $this->handleClientException($e, "MCP Response");
         } catch (NeuronException $e) {
-            // catch all the exception generated just from the agent
             $this->logger->logError("NeuronException response: " . $e->getMessage(), "MCP Response", $e);
+            \App\Services\UsageTracker::track([
+                'chat_id' => $chatId, 'user_id' => $userId, 'username' => $username,
+                'type' => 'mcp', 'model' => $this->config['openrouter_tool_model'] ?? 'unknown',
+                'duration_s' => round(microtime(true) - $startTime, 2),
+                'success' => false, 'error' => $e->getMessage(),
+            ]);
             return $this->formatter->formatNeuronErrorResponse($e->getMessage());
         } catch (\Exception $e) {
             // Log general exception
             $this->logger->logError("Error generating MCP response: " . $e->getMessage(), "MCP Response", $e);
+            \App\Services\UsageTracker::track([
+                'chat_id' => $chatId, 'user_id' => $userId, 'username' => $username,
+                'type' => 'mcp', 'model' => $this->config['openrouter_tool_model'] ?? 'unknown',
+                'duration_s' => round(microtime(true) - $startTime, 2),
+                'success' => false, 'error' => $e->getMessage(),
+            ]);
             $this->logger->log("jsonerr: " . get_class($e), "MCP Response", "webhook");
 
-            // Check if it's a server overload error
             $errorMessage = $e->getMessage();
 
+            // Check if it's a server overload error
             if (strpos($errorMessage, 'overloaded') !== false || strpos($errorMessage, '529') !== false) {
                 return $this->formatter->formatOverloadErrorResponse();
+            }
+
+            // Provide specific error for connection/transport failures
+            if ($this->isTransientError($e)) {
+                return $this->formatter->formatErrorResponse(
+                    'AI provider connection failed after retry. Please try again in a moment.',
+                    'connection_error'
+                );
             }
 
             return $this->formatter->formatGeneralErrorResponse();

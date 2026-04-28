@@ -123,6 +123,14 @@ class AntiSpamHandler
                 }
             }
 
+            // Track usage
+            \App\Services\UsageTracker::track([
+                'chat_id' => $chatId, 'user_id' => $userId, 'username' => $username,
+                'type' => 'antispam', 'model' => $this->config['openrouter_chat_model'] ?? 'unknown',
+                'input_tokens' => null, 'output_tokens' => null,
+                'success' => true,
+            ]);
+
             // If the message is spam, handle it
             if ($isSpam) {
                 $this->logger->log("Spam detected in message from user {$username} (ID: {$userId}) in chat {$chatId}. Score: {$spamScore}, Reason: {$reason}", "Spam Detected", "webhook");

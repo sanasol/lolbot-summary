@@ -30,6 +30,7 @@ class MentionReactionDecisionGenerator
     */
     public function decide(string $messageText, string $username, string $chatContext = '', int $chatId = 0): ?array
     {
+        $startTime = microtime(true);
         try {
             $model = $this->config['openrouter_reaction_model'] ?? ($this->config['openrouter_chat_model'] ?? null);
             if (!$model) {
@@ -85,6 +86,18 @@ class MentionReactionDecisionGenerator
             if (!is_array($data)) {
                 return null;
             }
+            // Track usage
+            $inTokens = $body['usage']['prompt_tokens'] ?? null;
+            $outTokens = $body['usage']['completion_tokens'] ?? null;
+            \App\Services\UsageTracker::track([
+                'chat_id' => $chatId, 'username' => $username,
+                'type' => 'reaction',
+                'model' => $model,
+                'input_tokens' => $inTokens, 'output_tokens' => $outTokens,
+                'duration_s' => round(microtime(true) - $startTime, 2),
+                'success' => true,
+            ]);
+
             // Normalize types
             return [
                 'should_react' => (bool)($data['should_react'] ?? false),

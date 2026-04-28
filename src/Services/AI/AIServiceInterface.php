@@ -38,6 +38,20 @@ interface AIServiceInterface
     public function generateMentionResponse(string $messageText, string $username, string $chatContext = '', ?string $inputImageUrl = null, bool $isBase64 = false, int $chatId = 0): ?array;
 
     /**
+     * Generate a response using the agent tool path.
+     *
+     * @param string $messageText The original message text
+     * @param string $username The username of the message sender
+     * @param string $chatContext Optional context from recent chat messages
+     * @param int $chatId The chat ID
+     * @param int|null $userId The user ID of the sender
+     * @param int|null $threadId The message thread ID for forum topics
+     * @param array<string, mixed> $options Extra execution options
+     * @return array|null The generated response or null if generation failed.
+     */
+    public function generateAgentResponse(string $messageText, string $username, string $chatContext = '', int $chatId = 0, ?int $userId = null, ?int $threadId = null, array $options = []): ?array;
+
+    /**
      * Generate a description for an image using vision model
      *
      * @param string $imageData URL of the image or base64-encoded image data

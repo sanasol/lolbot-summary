@@ -21,6 +21,8 @@ class CommandHandler
     private TelegramSender $sender;
     private VoteService $voteService;
     private MuteService $muteService;
+    private BotIdentityContext $botIdentityContext;
+    private ChatMetadataService $chatMetadataService;
     private array $config;
 
     public function __construct(
@@ -31,6 +33,8 @@ class CommandHandler
         TelegramSender $sender,
         VoteService $voteService,
         MuteService $muteService,
+        BotIdentityContext $botIdentityContext,
+        ChatMetadataService $chatMetadataService,
         array $config
     ) {
         $this->aiService = $aiService;
@@ -40,6 +44,8 @@ class CommandHandler
         $this->sender = $sender;
         $this->voteService = $voteService;
         $this->muteService = $muteService;
+        $this->botIdentityContext = $botIdentityContext;
+        $this->chatMetadataService = $chatMetadataService;
         $this->config = $config;
     }
 
@@ -87,10 +93,40 @@ class CommandHandler
         [$startTs, $endTs, $windowLabel] = $this->parseSummaryWindow($window);
         $this->logger->logCommand("Using summary window {$windowLabel} (" . gmdate('c', $startTs) . " to " . gmdate('c', $endTs) . ") for chat {$chatId}", "summary");
 
-        // Fetch messages in the window
-        $messages = $this->messageStorage->getMessagesInRange($chatId, $startTs, $endTs);
+        // Fetch summary messages across the whole chat, regardless of configured interaction topic.
+        $summarySource = $this->messageStorage->getSummaryMessagesInRange(
+            $chatId,
+            $startTs,
+            $endTs,
+            $this->botIdentityContext->getTelegramUsername()
+        );
+        $messages = $summarySource['messages'] ?? [];
         $messageCount = count($messages);
         $this->logger->logCommand("Retrieved {$messageCount} messages for chat {$chatId}", "summary");
+
+        $threadCounts = $summarySource['thread_counts'] ?? [];
+        $hasTopicSources = count($threadCounts) > 1 || array_key_exists('main', $threadCounts) === false;
+        if ($hasTopicSources && !empty($threadCounts)) {
+            $parts = [];
+            foreach ($threadCounts as $threadKey => $count) {
+                $parts[] = $threadKey === 'main'
+                    ? "main={$count}"
+                    : "TID:{$threadKey}={$count}";
+            }
+
+            $this->logger->logCommand(
+                "Summary source counts by thread for chat {$chatId}: " . implode(', ', $parts),
+                "summary"
+            );
+        }
+
+        $excludedBotMessages = (int)($summarySource['excluded_bot_messages'] ?? 0);
+        if ($excludedBotMessages > 0) {
+            $this->logger->logCommand(
+                "Excluded {$excludedBotMessages} Apollo-authored messages from summary source for chat {$chatId}",
+                "summary"
+            );
+        }
 
         if (empty($messages)) {
             $this->logger->logCommand("No messages found to summarize for chat {$chatId}", "summary");
@@ -267,8 +303,25 @@ class CommandHandler
      * @param int|null $threadId The message thread ID for forum topics
      * @return bool Whether the command was handled successfully
      */
-    public function handleMCPCommand(int $chatId, string $messageText, string $username, int $messageId, ?int $userId = null, ?int $threadId = null): bool
+    public function handleMCPCommand(
+        int $chatId,
+        string $messageText,
+        string $username,
+        int $messageId,
+        ?int $userId = null,
+        ?int $threadId = null,
+        string $trigger = 'slash'
+    ): bool
     {
+        \App\Services\UsageTracker::setContext([
+            'chat_id' => $chatId,
+            'username' => $username,
+            'trigger' => $trigger,
+            'route' => InteractionDecision::ROUTE_MCP,
+            'tone' => InteractionDecision::TONE_NEUTRAL,
+            'intent' => 'analytics',
+        ]);
+
         try {
             // Log the command
             $this->logger->logCommand(
@@ -292,14 +345,7 @@ class CommandHandler
             // Send a "typing" action to indicate the bot is working
             $this->sender->sendChatAction($chatId, 'typing');
 
-            // Get recent messages for context
-            $recentMessages = $this->messageStorage->getRecentChatContext($chatId);
-            $chatContext = '';
-
-            if (!empty($recentMessages)) {
-                $chatContext = "Recent conversation in the chat:\n" . implode("\n", $recentMessages) . "\n\n";
-                $this->logger->logCommand("Added " . count($recentMessages) . " recent messages as context", "mcp");
-            }
+            $chatContext = $this->buildMCPContext($chatId);
 
             // Generate response using MCP
             $response = $this->generateMCPResponse($messageText, $username, $chatContext, $userId, $chatId, $threadId);
@@ -377,6 +423,8 @@ class CommandHandler
             ]);
 
             return false;
+        } finally {
+            \App\Services\UsageTracker::clearContext();
         }
     }
 
@@ -414,7 +462,7 @@ class CommandHandler
 
         // Parse parameters
         $parts = explode(' ', $params);
-        $action = $parts[0] ?? '';
+        $action = strtolower($parts[0] ?? '');
 
         // If no parameters, show current settings
         if (empty($params)) {
@@ -437,6 +485,28 @@ class CommandHandler
             case 'mentions':
                 $enabled = $parts[1] ?? '';
                 $this->setBotMentionsEnabled($chatId, $enabled, $messageId);
+                break;
+
+            case 'style':
+            case 'tone':
+                $mode = $parts[1] ?? '';
+                $this->setReplyStyleMode($chatId, $mode, $messageId);
+                break;
+
+            case 'router':
+                $enabled = $parts[1] ?? '';
+                $this->setIntentRouterEnabled($chatId, $enabled, $messageId);
+                break;
+
+            case 'agent':
+            case 'agent_tools':
+                $enabled = $parts[1] ?? '';
+                $this->setAgentToolsEnabled($chatId, $enabled, $messageId);
+                break;
+
+            case 'context':
+                $contextValue = trim(substr($params, strlen($action)));
+                $this->setGroupContextNote($chatId, $contextValue, $messageId);
                 break;
 
             case 'voting':
@@ -537,6 +607,19 @@ class CommandHandler
         $languageName = $languages[$settings['language']] ?? $settings['language'];
         $summaryEnabled = $settings['summary_enabled'] ? '✅ Enabled' : '❌ Disabled';
         $mentionsEnabled = $settings['bot_mentions_enabled'] ? '✅ Enabled' : '❌ Disabled';
+        $replyStyleMode = (string)($settings['reply_style_mode'] ?? 'auto');
+        $routerSetting = $settings['intent_router_enabled'] ?? null;
+        $routerEnabled = $routerSetting === null
+            ? (($this->config['intent_router_enabled'] ?? false) ? '🟡 Global ON' : '⚪ Global OFF')
+            : ((bool)$routerSetting ? '✅ Enabled' : '❌ Disabled');
+        $agentSetting = $settings['agent_tools_enabled'] ?? null;
+        $agentEnabled = $agentSetting === null
+            ? (($this->config['agent_tools_enabled'] ?? false) ? '🟡 Global ON' : '⚪ Global OFF')
+            : ((bool)$agentSetting ? '✅ Enabled' : '❌ Disabled');
+        $groupContextNote = trim((string)($settings['group_context_note'] ?? ''));
+        $groupContextPreview = $groupContextNote !== ''
+            ? (mb_strlen($groupContextNote) > 90 ? mb_substr($groupContextNote, 0, 89) . '…' : $groupContextNote)
+            : '—';
         $votingEnabled = ($settings['vote_moderation_enabled'] ?? true) ? '✅ Enabled' : '❌ Disabled';
         $newUserRestrictionEnabled = ($settings['new_user_restriction_enabled'] ?? false) ? '✅ Enabled' : '❌ Disabled';
 
@@ -558,6 +641,10 @@ class CommandHandler
             "📝 *Summary*: {$summaryEnabled}\n" .
             "⏰ *Summary Time (UTC)*: {$summaryHourUtc}:00\n" .
             "🤖 *Bot Mentions*: {$mentionsEnabled}\n" .
+            "🎭 *Reply Style*: `" . $replyStyleMode . "`\n" .
+            "🧭 *Intent Router*: {$routerEnabled}\n" .
+            "🛠️ *Agent Tools*: {$agentEnabled}\n" .
+            "🧠 *Group Context*: {$groupContextPreview}\n" .
             "🗳️ *Community Voting*: {$votingEnabled}\n" .
             "   • YES needed to ban: {$vb}\n" .
             "   • YES needed to mute: {$vm}\n" .
@@ -604,6 +691,11 @@ class CommandHandler
             "  Available languages: {$languageList}\n" .
             "• `/settings summary [on/off]` - Enable/disable summaries\n" .
             "• `/settings mentions [on/off]` - Enable/disable bot mentions\n" .
+            "• `/settings style [auto/neutral/witty]` - Control reply tone selection\n" .
+            "• `/settings router [on/off]` - Enable/disable the new intent router for this chat\n" .
+            "• `/settings agent [on/off]` - Enable/disable agent tools for this chat\n" .
+            "• `/settings context [text]` - Save admin-provided context about this group\n" .
+            "• `/settings context clear` - Clear the saved group context note\n" .
             "• `/settings voting [on/off]` - Enable/disable community vote moderation\n" .
             "• `/settings voteban [n]` - Set YES votes required to ban (1-100). Example: `/settings voteban 5`\n" .
             "• `/settings votemute [n]` - Set YES votes required to mute (1-100). Example: `/settings votemute 3`\n" .
@@ -654,6 +746,12 @@ class CommandHandler
             "• `/settings` — Show or change group settings (admins only).\n" .
             "• `/mcp [query]` — Ask the bot to answer using recent chat context.\n" .
             "• `/account [token]` — Link your Statbate+ account in a private chat.\n\n" .
+            "Conversational behavior:\n" .
+            "• Address {$this->botIdentityContext->getCanonicalName()} or reply to the bot for normal chat replies.\n" .
+            "• Admins can enable the intent router with `/settings router on` so high-confidence analytics questions can auto-route to MCP.\n" .
+            "• Use `/settings style auto|neutral|witty` to control whether answers stay serious or playful.\n\n" .
+            "Agent behavior:\n" .
+            "• When agent tools are enabled for a chat, addressed requests can search the web, answer time/date questions, remember low-sensitivity context, create scheduled reminders, and generate images.\n\n" .
             "Community moderation (reply to a message):\n" .
             "• `/voteban` — start a vote to delete the message and ban its author.\n" .
             "• `/votemute` or `/votekick` — start a vote to temporarily mute the author.\n" .
@@ -797,6 +895,126 @@ class CommandHandler
             'chat_id' => $chatId,
             'text' => $message,
             'parse_mode' => 'Markdown',
+            'reply_to_message_id' => $messageId
+        ]);
+    }
+
+    /**
+     * Set conversational reply style mode.
+     */
+    private function setReplyStyleMode(int $chatId, string $mode, int $messageId): void
+    {
+        $mode = strtolower(trim($mode));
+        if (!$this->settingsService->isValidSetting('reply_style_mode', $mode)) {
+            Request::sendMessage([
+                'chat_id' => $chatId,
+                'text' => '⚠️ Invalid style. Use `auto`, `neutral`, or `witty`.',
+                'parse_mode' => 'Markdown',
+                'reply_to_message_id' => $messageId
+            ]);
+            return;
+        }
+
+        $formatted = $this->settingsService->formatSettingValue('reply_style_mode', $mode);
+        $this->settingsService->updateSetting($chatId, 'reply_style_mode', $formatted);
+
+        Request::sendMessage([
+            'chat_id' => $chatId,
+            'text' => "✅ Reply style set to `{$formatted}`.",
+            'parse_mode' => 'Markdown',
+            'reply_to_message_id' => $messageId
+        ]);
+    }
+
+    /**
+     * Enable or disable the per-chat intent router override.
+     */
+    private function setIntentRouterEnabled(int $chatId, string $enabled, int $messageId): void
+    {
+        $value = $this->parseBoolean($enabled);
+        if ($value === null) {
+            Request::sendMessage([
+                'chat_id' => $chatId,
+                'text' => '⚠️ Invalid value. Please use `on` or `off`.',
+                'parse_mode' => 'Markdown',
+                'reply_to_message_id' => $messageId
+            ]);
+            return;
+        }
+
+        $this->settingsService->updateSetting($chatId, 'intent_router_enabled', $value);
+        $status = $value ? 'enabled' : 'disabled';
+        $emoji = $value ? '✅' : '❌';
+
+        Request::sendMessage([
+            'chat_id' => $chatId,
+            'text' => "{$emoji} Intent router is now *{$status}* for this chat.",
+            'parse_mode' => 'Markdown',
+            'reply_to_message_id' => $messageId
+        ]);
+    }
+
+    /**
+     * Enable or disable the per-chat agent tools override.
+     */
+    private function setAgentToolsEnabled(int $chatId, string $enabled, int $messageId): void
+    {
+        $value = $this->parseBoolean($enabled);
+        if ($value === null) {
+            Request::sendMessage([
+                'chat_id' => $chatId,
+                'text' => '⚠️ Invalid value. Please use `on` or `off`.',
+                'parse_mode' => 'Markdown',
+                'reply_to_message_id' => $messageId
+            ]);
+            return;
+        }
+
+        $this->settingsService->updateSetting($chatId, 'agent_tools_enabled', $value);
+        $status = $value ? 'enabled' : 'disabled';
+        $emoji = $value ? '✅' : '❌';
+
+        Request::sendMessage([
+            'chat_id' => $chatId,
+            'text' => "{$emoji} Agent tools are now *{$status}* for this chat.",
+            'parse_mode' => 'Markdown',
+            'reply_to_message_id' => $messageId
+        ]);
+    }
+
+    /**
+     * Save or clear an admin-provided group context note.
+     */
+    private function setGroupContextNote(int $chatId, string $contextValue, int $messageId): void
+    {
+        $normalized = trim($contextValue);
+        if ($normalized === '') {
+            Request::sendMessage([
+                'chat_id' => $chatId,
+                'text' => '⚠️ Provide some text after `/settings context`, or use `/settings context clear`.',
+                'parse_mode' => 'Markdown',
+                'reply_to_message_id' => $messageId
+            ]);
+            return;
+        }
+
+        if (in_array(strtolower($normalized), ['clear', 'none', 'null'], true)) {
+            $this->settingsService->updateSetting($chatId, 'group_context_note', null);
+            Request::sendMessage([
+                'chat_id' => $chatId,
+                'text' => '✅ Group context note cleared.',
+                'parse_mode' => 'Markdown',
+                'reply_to_message_id' => $messageId
+            ]);
+            return;
+        }
+
+        $formatted = $this->settingsService->formatSettingValue('group_context_note', $normalized);
+        $this->settingsService->updateSetting($chatId, 'group_context_note', $formatted);
+
+        Request::sendMessage([
+            'chat_id' => $chatId,
+            'text' => "✅ Saved group context note:\n\n" . $formatted,
             'reply_to_message_id' => $messageId
         ]);
     }
@@ -1086,6 +1304,29 @@ class CommandHandler
         }
 
         return null;
+    }
+
+    /**
+     * Build shared MCP context from bot identity, chat metadata, and recent history.
+     */
+    private function buildMCPContext(int $chatId): string
+    {
+        $sections = [];
+
+        $sections[] = $this->botIdentityContext->buildPromptContext();
+
+        $metadataContext = $this->chatMetadataService->buildPromptContext($chatId);
+        if ($metadataContext !== '') {
+            $sections[] = $metadataContext;
+        }
+
+        $recentMessages = $this->messageStorage->getRecentChatContext($chatId);
+        if (!empty($recentMessages)) {
+            $sections[] = "Recent conversation in the chat:\n" . implode("\n", $recentMessages);
+            $this->logger->logCommand("Added " . count($recentMessages) . " recent messages as context", "mcp");
+        }
+
+        return implode("\n\n", array_filter($sections, static fn ($value) => trim((string)$value) !== ''));
     }
 
     /**

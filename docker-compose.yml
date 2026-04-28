@@ -17,6 +17,11 @@ services:
       - caddy_config:/config
     working_dir: /app
     restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:80"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
     environment:
       - TELEGRAM_BOT_TOKEN=${TELEGRAM_BOT_TOKEN}
       - OPENROUTER_KEY=${OPENROUTER_KEY}
@@ -39,6 +44,12 @@ services:
       - ./data:/app/data
     working_dir: /app
     restart: unless-stopped
+    # Disable inherited FrankenPHP health check (queue-worker doesn't run Caddy)
+    healthcheck:
+      test: ["CMD", "pgrep", "-f", "queue_worker"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
     environment:
       - TELEGRAM_BOT_TOKEN=${TELEGRAM_BOT_TOKEN}
       - OPENROUTER_KEY=${OPENROUTER_KEY}

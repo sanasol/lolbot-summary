@@ -14,7 +14,10 @@ RUN install-php-extensions \
     pdo_mysql \
     pdo \
     redis \
-    && apk add --no-cache dcron
+    gd \
+    imagick \
+    && apk add --no-cache dcron ttf-dejavu font-noto-emoji fontconfig \
+    && fc-cache -f
 
 # Create app user and group for running as non-root
 RUN addgroup -S app && adduser -S app -G app

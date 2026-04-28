@@ -33,6 +33,7 @@ class PeriodicTaskRunner
         $this->processVotes($now);
         $this->processMutes($now);
         $this->processNewUserRestrictions($now);
+        $this->processAgentTasks($now);
         $this->processLogRotation($now);
     }
 
@@ -222,6 +223,17 @@ class PeriodicTaskRunner
         }
     }
 
+    private function processAgentTasks(int $now): void
+    {
+        static $lastAgentRun = 0;
+        if ($now - $lastAgentRun < 5) {
+            return;
+        }
+        $lastAgentRun = $now;
+
+        $this->bot->getAgentTaskRunner()->runDueTasks($now);
+    }
+
     /**
      * Rotate logs - delete files older than 7 days
      * Runs once per hour
@@ -247,11 +259,30 @@ class PeriodicTaskRunner
         $deletedCount = 0;
         $totalSize = 0;
 
-        // Patterns to clean up
+        // Patterns to clean up (7-day retention)
         $patterns = [
-            '*.log',           // All log files
+            '*.log',               // All log files
             'chat_history/*.chat', // Chat history files
+            'responses/*.md',      // Saved AI response pages
         ];
+
+        // Usage analytics files — 30-day retention (separate loop below)
+        $usageMaxAge = 30 * 24 * 60 * 60;
+        $usageCutoff = $now - $usageMaxAge;
+        $usageFiles = glob($dataPath . '/usage/*.jsonl');
+        if ($usageFiles !== false) {
+            foreach ($usageFiles as $file) {
+                if (!is_file($file)) continue;
+                $mtime = filemtime($file);
+                if ($mtime !== false && $mtime < $usageCutoff) {
+                    $size = filesize($file);
+                    if (@unlink($file)) {
+                        $deletedCount++;
+                        $totalSize += $size ?: 0;
+                    }
+                }
+            }
+        }
 
         foreach ($patterns as $pattern) {
             $files = glob($dataPath . '/' . $pattern);

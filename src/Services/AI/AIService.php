@@ -2,7 +2,10 @@
 
 namespace App\Services\AI;
 
+use App\Services\BotIdentityContext;
+use App\Services\ChatMemoryStore;
 use App\Services\LoggerService;
+use App\Services\AgentTaskStore;
 use App\Services\SettingsService;
 
 /**
@@ -21,6 +24,10 @@ class AIService implements AIServiceInterface
     private PromptBuilder $promptBuilder;
     private ResponseFormatter $formatter;
     private MentionReactionDecisionGenerator $reactionDecisionGenerator;
+    private ?BotIdentityContext $botIdentityContext;
+    private ChatMemoryStore $chatMemoryStore;
+    private AgentTaskStore $agentTaskStore;
+    private AgentResponseGenerator $agentResponseGenerator;
 
     /**
      * Constructor
@@ -29,11 +36,12 @@ class AIService implements AIServiceInterface
      * @param LoggerService $logger The logger service
      * @param SettingsService|null $settingsService The settings service
      */
-    public function __construct(array $config, LoggerService $logger, ?SettingsService $settingsService = null)
+    public function __construct(array $config, LoggerService $logger, ?SettingsService $settingsService = null, ?BotIdentityContext $botIdentityContext = null)
     {
         $this->config = $config;
         $this->logger = $logger;
         $this->settingsService = $settingsService;
+        $this->botIdentityContext = $botIdentityContext;
 
         // Add settings service to config for use in generators
         if ($settingsService !== null) {
@@ -41,8 +49,15 @@ class AIService implements AIServiceInterface
         }
 
         // Initialize dependencies
-        $this->promptBuilder = new PromptBuilder();
+        $this->promptBuilder = new PromptBuilder($this->botIdentityContext);
         $this->formatter = new ResponseFormatter();
+        $dataPath = $this->config['log_path'] ?? (__DIR__ . '/../../../data');
+        $this->chatMemoryStore = new ChatMemoryStore($dataPath, $this->logger);
+        $this->agentTaskStore = new AgentTaskStore(
+            $dataPath,
+            $this->logger,
+            (string)($this->config['agent_default_timezone'] ?? 'Europe/Belgrade')
+        );
 
         // Initialize generators
         $this->mcpGenerator = new MCPResponseGenerator($this->config, $this->formatter, $this->logger, $this->settingsService);
@@ -50,6 +65,16 @@ class AIService implements AIServiceInterface
         $this->imageProcessor = new ImageProcessor($this->config, $this->promptBuilder, $this->formatter, $this->logger);
         $this->summaryGenerator = new SummaryGenerator($this->config, $this->promptBuilder, $this->formatter, $this->logger);
         $this->reactionDecisionGenerator = new MentionReactionDecisionGenerator($this->config, $this->logger);
+        $this->agentResponseGenerator = new AgentResponseGenerator(
+            $this->config,
+            $this->promptBuilder,
+            $this->formatter,
+            $this->logger,
+            $this->chatMemoryStore,
+            $this->agentTaskStore,
+            $this->botIdentityContext,
+            $this->imageProcessor
+        );
     }
 
     /**
@@ -140,6 +165,14 @@ class AIService implements AIServiceInterface
     }
 
     /**
+     * @param array<string, mixed> $options
+     */
+    public function generateAgentResponse(string $messageText, string $username, string $chatContext = '', int $chatId = 0, ?int $userId = null, ?int $threadId = null, array $options = []): ?array
+    {
+        return $this->agentResponseGenerator->generate($messageText, $username, $chatContext, $chatId, $userId, $threadId, $options);
+    }
+
+    /**
      * Generate a description for an image using vision model
      *
      * @param string $imageData URL of the image or base64-encoded image data
@@ -181,6 +214,16 @@ class AIService implements AIServiceInterface
     public function generateChatSummary(array $messages, ?int $chatId = null, ?string $chatTitle = null, ?string $chatUsername = null, ?string $windowLabel = null): ?string
     {
         return $this->summaryGenerator->generate($messages, $chatId, $chatTitle, $chatUsername, $windowLabel);
+    }
+
+    public function getChatMemoryStore(): ChatMemoryStore
+    {
+        return $this->chatMemoryStore;
+    }
+
+    public function getAgentTaskStore(): AgentTaskStore
+    {
+        return $this->agentTaskStore;
     }
 
     /**

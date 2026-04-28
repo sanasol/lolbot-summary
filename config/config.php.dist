@@ -19,6 +19,19 @@ return [
     'openrouter_chat_model' => 'google/gemini-2.5-flash', // Or choose another suitable model
     'openrouter_vision_model' => 'openai/o4-mini-high', // Or choose another suitable model
     'openrouter_image_model' => 'google/gemini-2.5-flash-image-preview', // Or choose another suitable model
+    'intent_router_enabled' => filter_var(
+        (($routerEnabledEnv = getenv('INTENT_ROUTER_ENABLED')) !== false ? $routerEnabledEnv : true),
+        FILTER_VALIDATE_BOOLEAN
+    ),
+    'agent_tools_enabled' => filter_var(
+        (($agentEnabledEnv = getenv('AGENT_TOOLS_ENABLED')) !== false ? $agentEnabledEnv : true),
+        FILTER_VALIDATE_BOOLEAN
+    ),
+    'agent_default_timezone' => getenv('AGENT_DEFAULT_TIMEZONE') ?: 'Europe/Belgrade',
+    'statbate_api_token' => getenv('STATBATE_API_TOKEN') ?: '',
+    'voyage_api_key' => getenv('VOYAGE_API_KEY') ?: '',
+    'pinecone_api_key' => getenv('PINECONE_API_KEY') ?: '',
+    'pinecone_index_url' => getenv('PINECONE_INDEX_URL') ?: '',
 
     // OpenRouter provider configuration for ClickhouseAgent
 //    'openrouter_tool_model' => getenv('OPENROUTER_MODEL') ?: 'google/gemini-2.5-flash-preview:thinking', // Default to Claude 3.5 Sonnet

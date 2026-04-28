@@ -58,7 +58,7 @@ AI-powered data analysis using NeuronAI framework with:
 
 ### API Integration
 
-Internal API token: `apollo-secret-api-user-76543132456`
+Internal API token: configured through `STATBATE_API_TOKEN`
 
 Available endpoints:
 - `/members/{site}/{name}/info` - Member stats

@@ -143,15 +143,16 @@ class ImageProcessor
     public function isImageGenerationRequest(string $messageText, ?string $inputImageUrl = null): bool
     {
         try {
-            // Check for common image generation keywords
-            $imageKeywords = [
-                'draw', 'generate image', 'create image', 'make image', 'show me',
-                'нарисуй', 'покажи', 'сделай картинку', 'сгенерируй', 'создай изображение'
+            $patterns = [
+                '/(?:^|\b)(draw|generate|create|make|illustrate|render)\b.{0,200}$/ui',
+                '/\b(redraw|edit|transform|restyle|upscale|remove background)\b/ui',
+                '/(?:^|\b)(нарисуй|сгенерируй|создай)\b.{0,200}$/ui',
+                '/\b(перерисуй|отредактируй|измени|улучши|апскейл)\b/ui',
             ];
 
-            foreach ($imageKeywords as $keyword) {
-                if (stripos($messageText, $keyword) !== false) {
-                    $this->logger->log("Detected image generation keyword: " . $keyword, "Image Request", "webhook");
+            foreach ($patterns as $pattern) {
+                if (preg_match($pattern, $messageText) === 1) {
+                    $this->logger->log("Detected explicit image generation intent via pattern: " . $pattern, "Image Request", "webhook");
                     return true;
                 }
             }
@@ -321,6 +322,7 @@ class ImageProcessor
      */
     public function generateImage(string $messageText, ?string $inputImageUrl = null): ?array
     {
+        $imgStartTime = microtime(true);
         try {
             $this->logger->log("Generating image with OpenRouter API", "Image Generation", "webhook");
 
@@ -424,6 +426,15 @@ class ImageProcessor
                 ];
             }
 
+            // Track image generation usage
+            \App\Services\UsageTracker::track([
+                'type' => 'image', 'model' => $this->config['openrouter_image_model'] ?? 'unknown',
+                'input_tokens' => $body['usage']['prompt_tokens'] ?? null,
+                'output_tokens' => $body['usage']['completion_tokens'] ?? null,
+                'duration_s' => round(microtime(true) - $imgStartTime, 2),
+                'success' => true,
+            ]);
+
             // Parse the response according to the OpenRouter API format
             if (isset($body['choices'][0]['message'])) {
                 $message = $body['choices'][0]['message'];
@@ -506,9 +517,21 @@ class ImageProcessor
             }
 
             $this->logger->log("Failed to generate image, unexpected response format: " . json_encode($body), "Image Generation", "webhook", true);
+            \App\Services\UsageTracker::track([
+                'type' => 'image', 'model' => $this->config['openrouter_image_model'] ?? 'unknown',
+                'input_tokens' => $body['usage']['prompt_tokens'] ?? null,
+                'output_tokens' => $body['usage']['completion_tokens'] ?? null,
+                'duration_s' => round(microtime(true) - $imgStartTime, 2),
+                'success' => false, 'error' => 'unexpected response format',
+            ]);
             return null;
         } catch (\Exception $e) {
             $this->logger->log("Error generating image: " . $e->getMessage(), "Image Generation", "webhook", true);
+            \App\Services\UsageTracker::track([
+                'type' => 'image', 'model' => $this->config['openrouter_image_model'] ?? 'unknown',
+                'duration_s' => round(microtime(true) - $imgStartTime, 2),
+                'success' => false, 'error' => $e->getMessage(),
+            ]);
             return null;
         }
     }

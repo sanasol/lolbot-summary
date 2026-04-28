@@ -4,6 +4,9 @@ namespace App\Services;
 
 use App\Services\AI\AIService as AIServiceImplementation;
 use App\Services\AI\AIServiceInterface;
+use App\Services\AgentTaskStore;
+use App\Services\BotIdentityContext;
+use App\Services\ChatMemoryStore;
 use App\Services\LoggerService;
 
 /**
@@ -20,9 +23,13 @@ class AIService implements AIServiceInterface
      * @param SettingsService|null $settingsService The settings service
      * @param LoggerService|null $loggerService The logger service
      */
-    public function __construct(array $config, ?SettingsService $settingsService = null, ?LoggerService $loggerService = null)
-    {
-        $this->implementation = new AIServiceImplementation($config, $loggerService, $settingsService);
+    public function __construct(
+        array $config,
+        ?SettingsService $settingsService = null,
+        ?LoggerService $loggerService = null,
+        ?BotIdentityContext $botIdentityContext = null
+    ) {
+        $this->implementation = new AIServiceImplementation($config, $loggerService, $settingsService, $botIdentityContext);
     }
 
     /**
@@ -73,6 +80,16 @@ class AIService implements AIServiceInterface
     }
 
     /**
+     * Generate a response for the tool-enabled agent path.
+     *
+     * @param array<string, mixed> $options
+     */
+    public function generateAgentResponse(string $messageText, string $username, string $chatContext = '', int $chatId = 0, ?int $userId = null, ?int $threadId = null, array $options = []): ?array
+    {
+        return $this->implementation->generateAgentResponse($messageText, $username, $chatContext, $chatId, $userId, $threadId, $options);
+    }
+
+    /**
      * Generate a description for an image using vision model
      *
      * @param string $imageData URL of the image or base64-encoded image data
@@ -97,6 +114,16 @@ class AIService implements AIServiceInterface
     public function generateChatSummary(array $messages, ?int $chatId = null, ?string $chatTitle = null, ?string $chatUsername = null, ?string $windowLabel = null): ?string
     {
         return $this->implementation->generateChatSummary($messages, $chatId, $chatTitle, $chatUsername, $windowLabel);
+    }
+
+    public function getChatMemoryStore(): ChatMemoryStore
+    {
+        return $this->implementation->getChatMemoryStore();
+    }
+
+    public function getAgentTaskStore(): AgentTaskStore
+    {
+        return $this->implementation->getAgentTaskStore();
     }
 
     /**

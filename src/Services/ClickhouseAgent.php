@@ -12,6 +12,7 @@ use GuzzleHttp\Client as HttpClient;
 
 class ClickhouseAgent extends Agent
 {
+    private const ALLOWED_SITES = ['chaturbate', 'stripchat', 'bongacams', 'camsoda', 'mfc', 'livejasmin'];
     private static array $config;
     private bool $hasActiveSubscription = false;
 
@@ -23,10 +24,9 @@ class ClickhouseAgent extends Agent
     private const MAX_TOKENS = 50000;
 
     /**
-     * Statbate API base URL and token
+     * Statbate API base URL
      */
     private const STATBATE_API_URL = 'https://plus.statbate.com/api';
-    private const STATBATE_API_TOKEN = 'apollo-secret-api-user-76543132456';
 
     /**
      * Chat action sender for status updates
@@ -269,6 +269,16 @@ class ClickhouseAgent extends Agent
         return str_replace("'", "\'", $value);
     }
 
+    private function isAllowedSite(string $site): bool
+    {
+        return in_array(mb_strtolower(trim($site)), self::ALLOWED_SITES, true);
+    }
+
+    private function getStatbateApiToken(): string
+    {
+        return trim((string)(self::$config['statbate_api_token'] ?? getenv('STATBATE_API_TOKEN') ?: ''));
+    }
+
     /**
      * Truncate optimized results to fit within token limit
      *
@@ -354,9 +364,12 @@ class ClickhouseAgent extends Agent
             Current time: " . date('H:i:s') . ".
             Current date: " . date('Y-m-d') . ".
 
+            CRITICAL: You may receive conversation history from previous requests. ALWAYS respond ONLY to the LATEST user message (marked with [NEW REQUEST at ...]). IGNORE all previous requests and their results in the history. Do NOT repeat or reference previous analyses unless the user explicitly asks about them.
+
             IMPORTANT: PREFER using call_statbate_api tool for these common queries (faster and more reliable):
             - Member/donator info, tips, activity, top models: use call_statbate_api with endpoint like /members/{site}/{name}/info
             - Model/room info, tips, members, activity: use call_statbate_api with endpoint like /model/{site}/{name}/info
+            - Site-wide biggest/top tips in a recent time window: use get_site_biggest_tips
             - Only use run_select_query for complex custom queries NOT covered by the API
 
             Available API endpoints (use call_statbate_api):
@@ -376,13 +389,13 @@ class ClickhouseAgent extends Agent
             - /model/{site}/{name}/rank - Ranking history (supports: from, to)
 
             Common params: timezone (e.g. Europe/Bucharest), from/to (Y-m-d dates), page, per_page (max 200)
-            Sites: chaturbate, stripchat, bongacams, camsoda, mfc
+            Sites: chaturbate, stripchat, bongacams, camsoda, mfc, livejasmin
 
             Database is clickhouse version 24.10.2.80
             database definition for clickhouse: " . self::$config['clickhouse_db_definition'] . "
             logs_v2 table available but for requests not more than 1 day
             room_activity each record is 1 minute but must be grouped, can contain duplicated records.
-            Databases available: chaturbate, stripchat, camsoda, bongacams, mfc
+            Databases available: chaturbate, stripchat, camsoda, bongacams, mfc, livejasmin
             By default use chaturbate database unless otherwise specified.
             DONT MAKE SUMMARIES OF THE ENTIRE DATABASE OR ANYTHING ELSE THAT IS NOT REQUESTED IN THE MESSAGE!" .
             $timeLimitInstructions . "
@@ -403,8 +416,9 @@ class ClickhouseAgent extends Agent
                 Provide a summary of the content.
                 Include any relevant details that may be useful for understanding the content.
                 Include detailed information about what queries made to DB with all important notes, dont report raw queries, but report what tables used and what conditions used
+                Return ONLY the final user-facing answer. Never include chain-of-thought, tool JSON, prompt analysis, transcript replay, repeated END/STOP/FINAL markers, boxed-answer scaffolding, or any commentary about shutdown/history/internal rules.
 
-               Use html formatting for final result, dont use html tables";
+               Format the final result using Markdown: use **bold** for emphasis, ### for headings, - for lists, `code` for values, and Markdown tables where appropriate. Keep the output clean and readable.";
 
         return $prompt;
     }
@@ -670,13 +684,126 @@ class ClickhouseAgent extends Agent
             }),
 
             Tool::make(
+                'get_site_biggest_tips',
+                'Get the biggest individual tips for a site in a recent time window. Prefer this over raw SQL for queries like "biggest tips for stripchat last hour".',
+            )->setMaxTries(10)->addProperty(
+                new ToolProperty(
+                    name: 'site',
+                    type: PropertyType::STRING,
+                    description: 'Site/database name. Allowed: chaturbate, stripchat, bongacams, camsoda, mfc, livejasmin.',
+                    required: true
+                )
+            )->addProperty(
+                new ToolProperty(
+                    name: 'window_minutes',
+                    type: PropertyType::INTEGER,
+                    description: 'How many recent minutes to look back. Example: 60 for last hour.',
+                    required: false
+                )
+            )->addProperty(
+                new ToolProperty(
+                    name: 'limit',
+                    type: PropertyType::INTEGER,
+                    description: 'Maximum number of tip events to return. Default 20, max 50.',
+                    required: false
+                )
+            )->setCallable(function (string $site, ?int $window_minutes = null, ?int $limit = null) {
+                self::sendChatAction();
+                $this->toolCalls++;
+
+                $site = mb_strtolower(trim($site));
+                $windowMinutes = max(1, min(60 * 24 * 30, (int)($window_minutes ?? 60)));
+                $limit = max(1, min(50, (int)($limit ?? 20)));
+
+                if (!$this->isAllowedSite($site)) {
+                    return json_encode([
+                        'toolCalls' => $this->toolCalls,
+                        'status' => 'error',
+                        'message' => 'Unsupported site. Allowed: ' . implode(', ', self::ALLOWED_SITES),
+                        '_source' => 'site_biggest_tips'
+                    ]);
+                }
+
+                $logPrefix = "[" . date('Y-m-d H:i:s') . "] [tool call] ";
+                $webhookLogFile = self::$config['log_path'] . '/webhook_' . date('Y-m-d') . '.log';
+
+                $query = "
+                    SELECT
+                        r.name AS model_name,
+                        d.name AS donor_name,
+                        s.token AS tokens,
+                        s.time AS tip_time
+                    FROM {$site}.stats_v2 AS s
+                    LEFT JOIN {$site}.rooms AS r ON s.rid = r.id
+                    LEFT JOIN {$site}.donators AS d ON s.did = d.id
+                    WHERE s.time >= (now() - INTERVAL {$windowMinutes} MINUTE)
+                      AND s.token > 0
+                    ORDER BY s.token DESC, s.time DESC
+                    LIMIT {$limit}
+                ";
+
+                file_put_contents(
+                    $webhookLogFile,
+                    $logPrefix . "Executing tool get_site_biggest_tips with site={$site}, window_minutes={$windowMinutes}, limit={$limit}" . PHP_EOL . PHP_EOL,
+                    FILE_APPEND
+                );
+
+                try {
+                    $clickhouse = new ClickHouseClient([
+                        'host' => self::$config['clickhouse']['host'],
+                        'port' => self::$config['clickhouse']['port'],
+                        'username' => self::$config['clickhouse']['username'],
+                        'password' => self::$config['clickhouse']['password']
+                    ]);
+
+                    $clickhouse->setTimeout(60);
+                    $clickhouse->settings()->set('readonly', 1);
+
+                    $statement = $clickhouse->select($query);
+                    $result = $statement->rows();
+                    $optimizedResult = $this->convertToOptimizedFormat($result);
+                    $optimizedResult['toolCalls'] = $this->toolCalls;
+                    $optimizedResult['_source'] = 'site_biggest_tips';
+                    $optimizedResult['_site'] = $site;
+                    $optimizedResult['_window_minutes'] = $windowMinutes;
+
+                    if (($optimizedResult['count'] ?? 0) === 0) {
+                        $optimizedResult['comment'] = 'No tips found in the requested time window.';
+                    }
+
+                    $resultJson = json_encode($optimizedResult);
+                    $tokenCount = $this->estimateTokenCount($resultJson);
+                    file_put_contents(
+                        $webhookLogFile,
+                        $logPrefix . "Finished get_site_biggest_tips (approx. {$tokenCount} tokens): " . $resultJson . PHP_EOL . PHP_EOL,
+                        FILE_APPEND
+                    );
+
+                    return $resultJson;
+                } catch (\Exception $e) {
+                    $error = json_encode([
+                        'toolCalls' => $this->toolCalls,
+                        'status' => 'error',
+                        'message' => 'Biggest tips query failed: ' . $e->getMessage(),
+                        '_source' => 'site_biggest_tips'
+                    ]);
+                    file_put_contents(
+                        $webhookLogFile,
+                        $logPrefix . "Error in get_site_biggest_tips: " . $error . PHP_EOL . PHP_EOL,
+                        FILE_APPEND
+                    );
+                    return $error;
+                }
+            }),
+
+            Tool::make(
                 'call_statbate_api',
                 'Call the Statbate API for stable, optimized data queries. PREFERRED over raw ClickHouse for member/model info, tips, activity.',
             )->setMaxTries(1000)->addProperty(
                 new ToolProperty(
                     name: 'endpoint',
                     type: PropertyType::STRING,
-                    description: 'API endpoint path. Sites: chaturbate, stripchat, bongacams, camsoda, mfc. ' .
+                    description: 'API endpoint path. Sites: chaturbate, stripchat, bongacams, camsoda, mfc, livejasmin. ' .
                         'Member endpoints: /members/{site}/{name}/info (stats), /members/{site}/{name}/tips (tip history), ' .
                         '/members/{site}/{name}/top-models (top tipped), /members/{site}/{name}/activity (timeline), ' .
                         '/members/{site}/{name}/tag-spending (spending by tag), /members/{site}/{name}/model-spending/{model} (spending on specific model). ' .
@@ -733,6 +860,16 @@ class ClickhouseAgent extends Agent
 
                 self::sendChatAction();
                 try {
+                    $apiToken = $this->getStatbateApiToken();
+                    if ($apiToken === '') {
+                        return json_encode([
+                            'toolCalls' => $this->toolCalls,
+                            'status' => 'error',
+                            'message' => 'Statbate API token is not configured.',
+                            '_source' => 'statbate_api'
+                        ]);
+                    }
+
                     $client = new HttpClient([
                         'timeout' => 30,
                         'verify' => false, // Skip SSL verification for internal API
@@ -740,9 +877,9 @@ class ClickhouseAgent extends Agent
 
                     $response = $client->get($url, [
                         'headers' => [
-                            'Authorization' => 'Bearer ' . self::STATBATE_API_TOKEN,
+                            'Authorization' => 'Bearer ' . $apiToken,
                             'Accept' => 'application/json',
-                            'X-Account-Identifier' => self::STATBATE_API_TOKEN,
+                            'X-Account-Identifier' => $apiToken,
                         ],
                     ]);
 
