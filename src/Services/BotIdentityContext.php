@@ -111,6 +111,8 @@ class BotIdentityContext
             '- Aliases: ' . implode(', ', $this->getAliases()),
             '- Capabilities: ' . implode(' | ', $this->getCapabilities()),
             '- Commands: ' . implode(' | ', $this->getCommandHelpSnippets()),
+            '- Capabilities are extra tools and integrations, not the boundary of normal group-chat conversation.',
+            '- For ordinary safe questions, banter, hypotheticals, jokes, rewrites, opinions, and general knowledge, answer normally even when no command or tool is involved.',
             '- If asked what you can do, answer using the capabilities and commands above.',
             '- Do not pretend to support commands or integrations that are not listed above.',
         ];

@@ -170,6 +170,10 @@ class MentionResponseGenerator
 
             if (isset($body['choices'][0]['message']['content'])) {
                 $grokResponse = trim($body['choices'][0]['message']['content']);
+                $repairedResponse = $this->repairSelfLimitingResponse($messageText, $username, $grokResponse, $language);
+                if ($repairedResponse !== null) {
+                    $grokResponse = $repairedResponse;
+                }
 
                 // Log successful response generation
                 $this->logger->log("Generated text response: " . $grokResponse, "Grok Response", "webhook");
@@ -216,5 +220,77 @@ class MentionResponseGenerator
             ]);
             return null;
         }
+    }
+
+    private function repairSelfLimitingResponse(string $messageText, string $username, string $response, string $language): ?string
+    {
+        if (!$this->looksLikeSelfLimitingNonAnswer($response)) {
+            return null;
+        }
+
+        $targetLanguage = $language === 'ru' ? 'Russian' : 'English';
+        $params = [
+            'model' => $this->config['openrouter_chat_model'],
+            'messages' => [
+                [
+                    'role' => 'system',
+                    'content' => 'Rewrite a failed Telegram bot reply into an engaged entertainment group-chat answer. ' .
+                        'Respond only in ' . $targetLanguage . '. ' .
+                        'Do not mention capabilities, functions, lack of expertise, or "as an AI". ' .
+                        'If the user asked a legal/medical/financial/safety-adjacent question, give a brief high-level non-professional overview and a tiny caveat instead of refusing. ' .
+                        'If the user complained that the bot is boring or too restricted, answer with light banter and recover. ' .
+                        'Keep it concise, 1-3 sentences.',
+                ],
+                [
+                    'role' => 'user',
+                    'content' => "User {$username} asked:\n{$messageText}\n\nBad bot reply to rewrite:\n{$response}",
+                ],
+            ],
+            'temperature' => 0.45,
+            'max_tokens' => 320,
+        ];
+
+        $body = $this->makeOpenRouterRequest($this->config, $params, 'Grok Response Repair', 20);
+        $content = $this->extractContentFromResponse($body, 'Grok Response Repair');
+        if ($content === null || $this->looksLikeSelfLimitingNonAnswer($content)) {
+            return null;
+        }
+
+        $this->logger->log('Repaired self-limiting mention response', 'Grok Response Repair', 'webhook');
+        return $content;
+    }
+
+    private function looksLikeSelfLimitingNonAnswer(string $response): bool
+    {
+        $normalized = mb_strtolower(trim($response));
+        if ($normalized === '') {
+            return false;
+        }
+
+        $markers = [
+            'как ии',
+            'как искусственный интеллект',
+            'as an ai',
+            'не обладаю юридической экспертизой',
+            'не могу давать консультации',
+            'мои функции не включают',
+            'не предназначен для анализа',
+            'не входит в мои функции',
+            'могу помочь сделать чат интереснее',
+            'дайте мне конкретные задачи',
+            'i lack legal expertise',
+            'i cannot provide legal advice',
+            'my functions do not include',
+            'beyond my capabilities',
+            'give me concrete tasks',
+        ];
+
+        foreach ($markers as $marker) {
+            if (str_contains($normalized, $marker)) {
+                return true;
+            }
+        }
+
+        return false;
     }
 }

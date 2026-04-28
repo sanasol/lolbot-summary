@@ -126,7 +126,7 @@ class AgentResponseGenerator
                 ->addTool($registry->buildTools());
 
             $response = $agent->chat(UserMessage::make($messageText));
-            $normalized = $this->normalizeAgentResponse($response->getContent(), $response->getMetadata('images'));
+            $normalized = $this->normalizeAgentResponse($response->getContent(), $response->getMetadata('images'), $messageText);
             $stats = $registry->getStats();
             $serverToolUsage = $response->getMetadata('server_tool_use');
             if (is_array($serverToolUsage)) {
@@ -321,10 +321,11 @@ class AgentResponseGenerator
             : 'Use web_search for current information, datetime for date/time questions, image_generation for explicit draw/generate image requests, schedule_task for reminders/recurring jobs, get_chat_memory to recall group/user context, get_user_profile for questions about a participant, set_chat_memory for explicit remember requests or very stable low-sensitivity facts, and forget_chat_memory when a stored fact is wrong or should be forgotten.';
 
         $sections = [
-            'You are Apollo, a Telegram operations bot with an agent mode.',
+            'You are Apollo, an entertainment-first Telegram group bot with an agent mode.',
             $languageInstruction,
             $modeInstruction,
             $toolInstruction,
+            'Your default behavior is to engage with any safe addressed message. Do not hide behind a feature list.',
             'Default timezone for scheduling is ' . $defaultTimezone . '. If the user gives a clear time but no timezone, use this default and create the task without asking a follow-up question.',
             'For reminder or recurring task requests, prefer calling schedule_task directly. Only ask a follow-up question if the user did not provide enough information to determine any schedule at all.',
             'For requests like "in one minute", "через минуту", or similar relative delays including hours, days, weeks, months, and years, create a one-time task immediately using a relative delay or a computed run_at_utc. Do not just promise the reminder in plain text.',
@@ -341,7 +342,11 @@ class AgentResponseGenerator
             'For group participant overviews, provide a compact, well-formatted digest with several participants and 1-2 useful facts for each one.',
             'Prefer natural phrasing like mini-profiles, not raw bullet dumps copied from memory.',
             'Capabilities and tools describe special integrations, not a ban on normal text composition. You may synthesize labels, titles, tags, one-word descriptors, short lists, rewrites, jokes, examples, and concise creative text when the user asks.',
+            'For everyday legal, medical, financial, or safety-adjacent questions, provide a high-level non-professional overview with a brief caveat. Do not present it as professional advice, but do not refuse the whole question just because it touches a regulated topic.',
+            'For casual questions like whether memes are punishable, answer practically: a meme itself is not automatically punishable, but risks can appear around extremism, threats, defamation, hate speech, banned symbols, targeted harassment, or other unlawful context; for real risk ask a lawyer.',
             'Do not refuse just because the answer creates new text. Refuse only for unsafe requests, truly unavailable external actions, or missing required information.',
+            'Never use self-limiting boilerplate like "as an AI", "I lack legal expertise", "my functions do not include this", "I can only summarize/analyze", or "give me concrete tasks".',
+            'If the user complains that the bot is boring, too restricted, or over-instructed, acknowledge it lightly and recover with a useful answer or banter, not a capabilities pitch.',
             'For memory requests that ask you to turn remembered facts into names, titles, tags, labels, or one-word descriptors, read the memory/profile context and synthesize the requested wording. This is allowed.',
             'Never invent tool results. If a tool fails, say so briefly and continue if possible.',
             'Be concise, practical, and chat-friendly.',
@@ -1369,7 +1374,7 @@ class AgentResponseGenerator
      * @param array<int, mixed>|string|int|float|null $content
      * @param mixed $images
      */
-    private function normalizeAgentResponse(array|string|int|float|null $content, mixed $images): ?array
+    private function normalizeAgentResponse(array|string|int|float|null $content, mixed $images, string $messageText = ''): ?array
     {
         $text = $this->extractText($content);
         $imageUrl = $this->extractImageUrl($images, $content);
@@ -1387,10 +1392,87 @@ class AgentResponseGenerator
         }
 
         if ($text !== '') {
+            $repairedText = $this->repairSelfLimitingResponse($messageText, $text);
+            if ($repairedText !== null) {
+                $text = $repairedText;
+            }
             return $this->formatter->formatTextResponse($text);
         }
 
         return null;
+    }
+
+    private function repairSelfLimitingResponse(string $messageText, string $response): ?string
+    {
+        if (!$this->looksLikeSelfLimitingNonAnswer($response)) {
+            return null;
+        }
+
+        $language = $this->detectReplyLanguage($messageText);
+        $targetLanguage = $language === 'ru' ? 'Russian' : 'English';
+        $params = [
+            'model' => $this->config['openrouter_chat_model'] ?? $this->config['openrouter_tool_model'],
+            'messages' => [
+                [
+                    'role' => 'system',
+                    'content' => 'Rewrite a failed Telegram bot agent reply into an engaged entertainment group-chat answer. ' .
+                        'Respond only in ' . $targetLanguage . '. ' .
+                        'Do not mention capabilities, functions, lack of expertise, or "as an AI". ' .
+                        'If the user asked a legal/medical/financial/safety-adjacent question, give a brief high-level non-professional overview and a tiny caveat instead of refusing. ' .
+                        'If the user complained that the bot is boring or too restricted, answer with light banter and recover. ' .
+                        'Keep it concise, 1-3 sentences.',
+                ],
+                [
+                    'role' => 'user',
+                    'content' => "Original user request:\n{$messageText}\n\nBad bot reply to rewrite:\n{$response}",
+                ],
+            ],
+            'temperature' => 0.45,
+            'max_tokens' => 320,
+        ];
+
+        $body = $this->makeOpenRouterRequest($this->config, $params, 'Agent Response Repair', 20);
+        $content = $this->extractContentFromResponse($body, 'Agent Response Repair');
+        if ($content === null || $this->looksLikeSelfLimitingNonAnswer($content)) {
+            return null;
+        }
+
+        $this->logger->log('Repaired self-limiting agent response', 'Agent Response Repair', 'webhook');
+        return $content;
+    }
+
+    private function looksLikeSelfLimitingNonAnswer(string $response): bool
+    {
+        $normalized = mb_strtolower(trim($response));
+        if ($normalized === '') {
+            return false;
+        }
+
+        $markers = [
+            'как ии',
+            'как искусственный интеллект',
+            'as an ai',
+            'не обладаю юридической экспертизой',
+            'не могу давать консультации',
+            'мои функции не включают',
+            'не предназначен для анализа',
+            'не входит в мои функции',
+            'могу помочь сделать чат интереснее',
+            'дайте мне конкретные задачи',
+            'i lack legal expertise',
+            'i cannot provide legal advice',
+            'my functions do not include',
+            'beyond my capabilities',
+            'give me concrete tasks',
+        ];
+
+        foreach ($markers as $marker) {
+            if (str_contains($normalized, $marker)) {
+                return true;
+            }
+        }
+
+        return false;
     }
 
     /**
