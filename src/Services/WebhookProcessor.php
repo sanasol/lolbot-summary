@@ -11,6 +11,8 @@ use Longman\TelegramBot\Request;
  */
 class WebhookProcessor
 {
+    private const DUPLICATE_UPDATE_WINDOW = 20000;
+
     private MessageStorage $messageStorage;
     private BotMentionHandler $mentionHandler;
     private CommandHandler $commandHandler;
@@ -760,18 +762,51 @@ class WebhookProcessor
     private function hasDuplicateUpdate(int $updateId): bool
     {
         $jsonFile = $this->config['log_path'] . '/previous_updates.json';
-        $previousUpdates = [];
-        if (file_exists($jsonFile)) {
-            $previousUpdates = json_decode((string)file_get_contents($jsonFile), true);
-        }
-        if (in_array($updateId, $previousUpdates, true)) {
-            return true;
+        $lockFile = $jsonFile . '.lock';
+        $lockHandle = @fopen($lockFile, 'c');
+        $locked = false;
+
+        if (!is_resource($lockHandle)) {
+            $this->logger->logError('Failed to open duplicate update lock file: ' . $lockFile, 'Duplicate Update');
+            return false;
         }
 
-        $previousUpdates[] = $updateId;
-        file_put_contents($jsonFile, json_encode($previousUpdates));
+        try {
+            if (!flock($lockHandle, LOCK_EX)) {
+                $this->logger->logError('Failed to lock duplicate update file: ' . $lockFile, 'Duplicate Update');
+                return false;
+            }
+            $locked = true;
 
-        return false;
+            $previousUpdates = [];
+            if (file_exists($jsonFile)) {
+                $decoded = json_decode((string)file_get_contents($jsonFile), true);
+                if (is_array($decoded)) {
+                    $previousUpdates = $decoded;
+                }
+            }
+
+            if (in_array($updateId, $previousUpdates, true)) {
+                return true;
+            }
+
+            $previousUpdates[] = $updateId;
+            if (count($previousUpdates) > self::DUPLICATE_UPDATE_WINDOW) {
+                $previousUpdates = array_slice($previousUpdates, -self::DUPLICATE_UPDATE_WINDOW);
+            }
+
+            $written = file_put_contents($jsonFile, json_encode($previousUpdates), LOCK_EX);
+            if ($written === false) {
+                $this->logger->logError('Failed to write duplicate update file: ' . $jsonFile, 'Duplicate Update');
+            }
+
+            return false;
+        } finally {
+            if ($locked) {
+                flock($lockHandle, LOCK_UN);
+            }
+            fclose($lockHandle);
+        }
     }
 
     /**
