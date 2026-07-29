@@ -269,6 +269,19 @@ class ClickhouseAgent extends Agent
         return str_replace("'", "\'", $value);
     }
 
+    protected function normalizeDonatorNameLookup(string $query): string
+    {
+        if (!preg_match('/\bdonators\b/i', $query)) {
+            return $query;
+        }
+
+        return preg_replace_callback(
+            "/(?<![\\w.])(`?name`?)\\s*=\\s*('(?:\\\\.|[^'])*')/i",
+            static fn (array $match): string => "lowerUTF8({$match[1]}) = lowerUTF8({$match[2]})",
+            $query
+        ) ?? $query;
+    }
+
     private function isAllowedSite(string $site): bool
     {
         return in_array(mb_strtolower(trim($site)), self::ALLOWED_SITES, true);
@@ -587,6 +600,7 @@ class ClickhouseAgent extends Agent
             )->setCallable(function (string $query) {
                 self::sendChatAction();
                 $this->toolCalls++;
+                $query = $this->normalizeDonatorNameLookup($query);
 
                 $logPrefix = "[" . date('Y-m-d H:i:s') . "] [tool call] ";
                 $webhookLogFile = self::$config['log_path'] . '/webhook_' . date('Y-m-d') . '.log';
