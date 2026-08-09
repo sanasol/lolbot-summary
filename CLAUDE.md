@@ -32,8 +32,8 @@ summary-bot:
 ## Deployment
 
 ```bash
-# Server: 195.3.220.43
-ssh root@195.3.220.43
+# Server: London (private WireGuard endpoint)
+ssh root@10.77.0.8
 cd /home/summary
 
 # Restart bot
@@ -111,7 +111,8 @@ Automatic cleanup runs hourly:
 Key config values in `config/config.php`:
 - `telegram_bot_token` - Bot API token
 - `log_path` - Data directory path
-- `clickhouse` - ClickHouse connection settings
+- `clickhouse` - ClickHouse connection settings; reads use private CHProxy
+  `10.77.0.7:30124` through `CLICKHOUSE_HOST`/`CLICKHOUSE_PORT`
 - `openrouter_key` - AI model API key
 - `openrouter_tool_model` - Model for tool calls
 
